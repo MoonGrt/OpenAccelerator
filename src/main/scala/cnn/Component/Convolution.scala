@@ -64,7 +64,7 @@ case class Conv2DConfig(
   lineLength   : Int,             // number of pixels per line
   kernel       : Seq[Int],        // 9 elements, row-major: k11,k12,k13,k21,...,k33
   kernelShift  : Int = 4,         // right shift to divide by kernel sum (e.g. 16 -> shift 4)
-  insigned     : Boolean,         // input signed or unsigned
+  insigned     : Boolean = true,  // input signed or unsigned
   absolute     : Boolean = false, // absolute value of convolution output
   leftresize   : Boolean = true,  // left shift to increase precision (e.g. 16 -> shift 4)
   padding      : Int = 1,         // padding size (0=no padding, 1=same padding for 3x3 kernel)

@@ -109,48 +109,48 @@ class BatchReLU(config: ReLUConfig, numChannels: Int) extends Component {
   io.post.payload := Mux(io.EN, activatedChannels, io.pre.payload)
 }
 
-object ReLUGen {
-  def main(args: Array[String]): Unit = {
-    println("Generating ReLU modules...")
+// object ReLUGen {
+//   def main(args: Array[String]): Unit = {
+//     println("Generating ReLU modules...")
 
-    // Standard ReLU
-    SpinalConfig(targetDirectory = "rtl").generateVerilog(
-      new ReLU(ReLUConfig(
-        dataWidth = 8,
-        activationType = "relu"))
-    ).printPruned()
+//     // Standard ReLU
+//     SpinalConfig(targetDirectory = "rtl").generateVerilog(
+//       new ReLU(ReLUConfig(
+//         dataWidth = 8,
+//         activationType = "relu"))
+//     ).printPruned()
 
-    // // Leaky ReLU
-    // SpinalConfig(targetDirectory = "rtl").generateVerilog(
-    //   new ReLU(ReLUConfig(
-    //     dataWidth = 8,
-    //     activationType = "leaky_relu",
-    //     alpha = 0.01))
-    // ).printPruned()
+//     // // Leaky ReLU
+//     // SpinalConfig(targetDirectory = "rtl").generateVerilog(
+//     //   new ReLU(ReLUConfig(
+//     //     dataWidth = 8,
+//     //     activationType = "leaky_relu",
+//     //     alpha = 0.01))
+//     // ).printPruned()
 
-    // // Parametric ReLU
-    // SpinalConfig(targetDirectory = "rtl").generateVerilog(
-    //   new ReLU(ReLUConfig(
-    //     dataWidth = 8,
-    //     activationType = "parametric_relu",
-    //     alpha = 0.01))
-    // ).printPruned()
+//     // // Parametric ReLU
+//     // SpinalConfig(targetDirectory = "rtl").generateVerilog(
+//     //   new ReLU(ReLUConfig(
+//     //     dataWidth = 8,
+//     //     activationType = "parametric_relu",
+//     //     alpha = 0.01))
+//     // ).printPruned()
 
-    // // ELU
-    // SpinalConfig(targetDirectory = "rtl").generateVerilog(
-    //   new ReLU(ReLUConfig(
-    //     dataWidth = 8,
-    //     activationType = "elu",
-    //     alpha = 1.0))
-    // ).printPruned()
+//     // // ELU
+//     // SpinalConfig(targetDirectory = "rtl").generateVerilog(
+//     //   new ReLU(ReLUConfig(
+//     //     dataWidth = 8,
+//     //     activationType = "elu",
+//     //     alpha = 1.0))
+//     // ).printPruned()
 
-    // // Batch ReLU for 3 channels
-    // SpinalConfig(targetDirectory = "rtl").generateVerilog(
-    //   new BatchReLU(ReLUConfig(
-    //     dataWidth = 8,
-    //     activationType = "relu"), 3)
-    // ).printPruned()
+//     // // Batch ReLU for 3 channels
+//     // SpinalConfig(targetDirectory = "rtl").generateVerilog(
+//     //   new BatchReLU(ReLUConfig(
+//     //     dataWidth = 8,
+//     //     activationType = "relu"), 3)
+//     // ).printPruned()
 
-    println("ReLU modules generated successfully!")
-  }
-}
+//     println("ReLU modules generated successfully!")
+//   }
+// }

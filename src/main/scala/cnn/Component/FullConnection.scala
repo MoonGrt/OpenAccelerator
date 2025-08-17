@@ -73,7 +73,6 @@ class WeightLoader(dataWidth: Int, inputSize: Int, outputSize: Int) extends Comp
  */
 class PipelinedFullConnection(config: FullConnectionConfig) extends Component {
   import config._
-
   val io = new Bundle {
     val EN = in Bool()
     val pre = slave(Stream(Vec(SInt(inputWidth bits), inputSize)))
@@ -117,7 +116,6 @@ class PipelinedFullConnection(config: FullConnectionConfig) extends Component {
       } else {
         acc
       }
-
       // Quantization if enabled
       val quantized = if (quantization) {
         (withBias >> weightWidth).asUInt.resize(outputWidth)
@@ -141,7 +139,6 @@ class PipelinedFullConnection(config: FullConnectionConfig) extends Component {
  */
 class FullConnection(config: FullConnectionConfig) extends Component {
   import config._
-
   val io = new Bundle {
     val EN = in Bool()
     val pre = slave(Stream(Vec(SInt(inputWidth bits), inputSize)))
@@ -174,7 +171,6 @@ class FullConnection(config: FullConnectionConfig) extends Component {
       } else {
         acc
       }
-
       // Quantization if enabled
       val quantized = if (quantization) {
         // Simple quantization: right shift by weightWidth
@@ -185,7 +181,6 @@ class FullConnection(config: FullConnectionConfig) extends Component {
 
       result(i) := quantized.asSInt
     }
-
     result
   }
 

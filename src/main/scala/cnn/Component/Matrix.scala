@@ -133,6 +133,7 @@ class Matrix2x2(
   padding: Int = 1,
   stride: Int = 1
 ) extends Component {
+  val kernelSize = 2
   val io = new Bundle {
     val pre = slave(Stream(SInt(dataWidth bits)))
     val matrix_de = out Bool()
@@ -181,7 +182,6 @@ class Matrix2x2(
   // Convolution window center position (2 cycles delay to match matrix_de)
   val convX = Reg(UInt(log2Up(lineLength) bits)) init(0)
   val convY = Reg(UInt(log2Up(lineLength) bits)) init(0)
-
   when(raw_matrix_de) {
     // Convolution window center is at current pixel position minus 2 (for 2x2 kernel)
     convX := pixelX - 2
@@ -190,8 +190,7 @@ class Matrix2x2(
 
   // Padding logic: check if convolution window center is within valid area
   val isPadding = Bool()
-  isPadding := (convX < padding) || (convX >= lineLength - padding) ||
-               (convY < padding) || (convY >= lineLength - padding)
+  isPadding := (convX > (kernelSize - padding * 2 + 1)) || (convY > (kernelSize - padding * 2 + 1))
 
   // Stride logic: only output every stride-th convolution
   val strideCounter = Reg(UInt(log2Up(stride) bits)) init(0)
@@ -390,7 +389,6 @@ class Matrix3x3(
   // Convolution window center position (2 cycles delay to match matrix_de)
   val convX = Reg(UInt(log2Up(lineLength) bits)) init(0)
   val convY = Reg(UInt(log2Up(lineLength) bits)) init(0)
-
   when(raw_matrix_de) {
     // Convolution window center is at current pixel position minus 2 (for 3x3 kernel)
     convX := pixelX - 2
@@ -399,8 +397,7 @@ class Matrix3x3(
 
   // Padding logic: check if convolution window center is within valid area
   val isPadding = Bool()
-  isPadding := (convX < padding) || (convX >= lineLength - padding) ||
-               (convY < padding) || (convY >= lineLength - padding)
+  isPadding := (convX > (kernelSize - padding * 2 + 1)) || (convY > (kernelSize - padding * 2 + 1))
 
   // Stride logic: only output every stride-th convolution
   val strideCounter = Reg(UInt(log2Up(stride) bits)) init(0)
@@ -441,3 +438,124 @@ class Matrix3x3(
   io.matrix.m32 := m32.asSInt
   io.matrix.m33 := m33.asSInt
 }
+
+
+
+
+
+
+
+// General Matrix Interface
+case class MatrixInterface(dataWidth: Int, kernelSize: Int) extends Bundle with IMasterSlave {
+  val m = Vec(Vec(SInt(dataWidth bits), kernelSize), kernelSize)
+
+  override def asMaster() = this.asOutput()
+  override def asSlave() = this.asInput()
+  override def clone = MatrixInterface(dataWidth, kernelSize)
+
+  def << (that: MatrixInterface): Unit = {
+    for(i <- 0 until kernelSize; j <- 0 until kernelSize){
+      this.m(i)(j) := that.m(i)(j)
+    }
+  }
+}
+
+// General dynamic matrix
+class MatrixDyn(
+  dataWidth: Int,
+  lineLengthBits: Int,
+  kernelSize: Int,
+  padding: Int = 0,
+  stride: Int = 1
+) extends Component {
+  val io = new Bundle {
+    val IMG_HDISP = in UInt(lineLengthBits bits)
+    val pre = slave(Stream(SInt(dataWidth bits)))
+    val matrix_de = out Bool()
+    val matrix = master(MatrixInterface(dataWidth, kernelSize))
+  }
+
+  // Ready signal - always ready to accept input when not processing or when bypassing
+  io.pre.ready := True
+
+  // A total of (kernelSize - 1) line buffers are required.
+  val lineBuffers = Array.fill(kernelSize-1)(new ShiftRamDyn(dataWidth, lineLengthBits))
+
+  // Row data stream, row(0) is the latest row, row(kernelSize-1) is the oldest row.
+  val rows = Array.fill(kernelSize)(Reg(Bits(dataWidth bits)) init(0))
+
+  // Write the input pixels sequentially into lineBuffer
+  lineBuffers.zipWithIndex.foreach { case (ram, idx) =>
+    ram.io.CE := io.pre.valid
+    if(idx == 0) {
+      ram.io.D := io.pre.payload.asBits
+    } else {
+      ram.io.D := rows(idx).asBits
+    }
+    ram.io.LINE_LENGTH := io.IMG_HDISP
+    rows(idx+1) := ram.io.Q
+  }
+  rows(0) := io.pre.payload.asBits
+
+  // Column shift register
+  val shiftRegs = Array.fill(kernelSize, kernelSize)(Reg(Bits(dataWidth bits)) init(0))
+
+  when(io.pre.valid){
+    for(i <- 0 until kernelSize){
+      for(j <- 0 until kernelSize){
+        if(j == kernelSize-1){
+          shiftRegs(i)(j) := rows(i)
+        } else {
+          shiftRegs(i)(j) := shiftRegs(i)(j+1)
+        }
+      }
+    }
+  }
+
+  // Two-cycle delay de
+  val pre_de_r = Reg(Bits(2 bits)) init(0)
+  pre_de_r := (pre_de_r(0) ## io.pre.valid)
+  val raw_matrix_de = pre_de_r(1)
+
+  // Stride count
+  val strideCounter = Reg(UInt(log2Up(stride) bits)) init(0)
+  val strideValid = Bool()
+  strideValid := (strideCounter === 0)
+
+  when(raw_matrix_de){
+    if(stride > 1){
+      when(strideCounter === stride - 1){
+        strideCounter := 0
+      } otherwise {
+        strideCounter := strideCounter + 1
+      }
+    }
+  }
+
+  io.matrix_de := raw_matrix_de && strideValid
+
+  // Output control logic - only output when not padding and stride is valid
+  for(i <- 0 until kernelSize){
+    for(j <- 0 until kernelSize){
+      io.matrix.m(i)(j) := shiftRegs(i)(j).asSInt
+    }
+  }
+}
+
+// object MatrixDynGen {
+//   def main(args: Array[String]): Unit = {
+//     println("Generating MatrixDyn modules...")
+
+//     // 3x3 max pooling with stride 3
+//     SpinalConfig(targetDirectory = "rtl").generateVerilog(
+//       new MatrixDyn(
+//         dataWidth = 8,
+//         lineLengthBits = log2Up(28),
+//         kernelSize = 7,
+//         padding = 0,
+//         stride = 1)
+//     ).printPruned()
+
+//     println("MatrixDyn modules generated successfully!")
+//   }
+// }

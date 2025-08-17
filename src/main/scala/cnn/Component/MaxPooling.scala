@@ -58,22 +58,22 @@ class MaxPooling2x2(config: MaxPool2x2Config) extends Component {
   io.post.payload := Mux(io.EN, maxValue, io.pre.payload)
 }
 
-object MaxPool2x2Gen {
-  def main(args: Array[String]): Unit = {
-    println("Generating 2x2 MaxPooling modules...")
+// object MaxPool2x2Gen {
+//   def main(args: Array[String]): Unit = {
+//     println("Generating 2x2 MaxPooling modules...")
 
-    // 2x2 max pooling with stride 2
-    SpinalConfig(targetDirectory = "rtl").generateVerilog(
-      new MaxPooling2x2(MaxPool2x2Config(
-        dataWidth = 8,
-        lineLength = 480,
-        padding = 0,
-        stride = 2))
-    ).printPruned()
+//     // 2x2 max pooling with stride 2
+//     SpinalConfig(targetDirectory = "rtl").generateVerilog(
+//       new MaxPooling2x2(MaxPool2x2Config(
+//         dataWidth = 8,
+//         lineLength = 480,
+//         padding = 0,
+//         stride = 2))
+//     ).printPruned()
 
-    println("2x2 MaxPooling modules generated successfully!")
-  }
-}
+//     println("2x2 MaxPooling modules generated successfully!")
+//   }
+// }
 
 
 /**
@@ -135,19 +135,19 @@ class MaxPooling3x3(config: MaxPool3x3Config) extends Component {
   io.post.payload := Mux(io.EN, maxValue, io.pre.payload)
 }
 
-object MaxPool3x3Gen {
-  def main(args: Array[String]): Unit = {
-    println("Generating 3x3 MaxPooling modules...")
+// object MaxPool3x3Gen {
+//   def main(args: Array[String]): Unit = {
+//     println("Generating 3x3 MaxPooling modules...")
 
-    // 3x3 max pooling with stride 3
-    SpinalConfig(targetDirectory = "rtl").generateVerilog(
-      new MaxPooling3x3(MaxPool3x3Config(
-        dataWidth = 8,
-        lineLength = 480,
-        padding = 0,
-        stride = 3))
-    ).printPruned()
+//     // 3x3 max pooling with stride 3
+//     SpinalConfig(targetDirectory = "rtl").generateVerilog(
+//       new MaxPooling3x3(MaxPool3x3Config(
+//         dataWidth = 8,
+//         lineLength = 480,
+//         padding = 0,
+//         stride = 3))
+//     ).printPruned()
 
-    println("3x3 MaxPooling modules generated successfully!")
-  }
-}
+//     println("3x3 MaxPooling modules generated successfully!")
+//   }
+// }
