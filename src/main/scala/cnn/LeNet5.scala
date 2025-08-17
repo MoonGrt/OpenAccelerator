@@ -35,27 +35,29 @@ class SimpleLeNet5(config: LeNet5Config) extends Component {
     val EN = in Bool()
     val input = slave(Stream(SInt(dataWidth bits)))
     val output = master(Stream(SInt(dataWidth bits)))
+    val kernel1 = slave(Stream(SInt(dataWidth bits)))
+    val kernel2 = slave(Stream(SInt(dataWidth bits)))
+    val weight = slave(Stream(SInt(weightWidth bits)))
+    val bias = slave(Stream(SInt(biasWidth bits)))
   }
 
   // ============================================================================
   // Convolution Layer 1: 5×5 -> Output: 24×24
   // ============================================================================
-  // Gaussian kernel: 1 4 6 4 1 / 4 16 24 16 4 / 6 24 36 24 6 / 4 16 24 16 4 / 1 4 6 4 1
-  val gaussianKernel = Seq(1,4,6,4,1, 4,16,24,16,4, 6,24,36,24,6, 4,16,24,16,4, 1,4,6,4,1)
   val conv1_config = Conv2DConfig(
-        dataWidth = 8,
-        convWidth = 8,
-        lineLength = 28,
-        kernel = gaussianKernel,
-        kernelShift = 4,
-        kernelSize = 5,
-        insigned = false,
-        padding = 1,
-        stride = 1)
-  val conv1 = new Conv2DDyn(conv1_config)
+    dataWidth = 8,
+    convWidth = 8,
+    lineLength = 28,
+    kernelSize = 5,
+    kernelShift = 4,
+    lineLengthDyn = false,
+    kernelDyn = true,
+    padding = 2,
+    stride = 1)
+  val conv1 = new Conv2DStream(conv1_config)
   conv1.io.EN := io.EN
   conv1.io.pre <> io.input
-  conv1.io.LINEWIDTH := 28
+  conv1.io.kernel <> io.kernel1
 
   // ============================================================================
   // ReLU Activation after Conv1
@@ -67,34 +69,35 @@ class SimpleLeNet5(config: LeNet5Config) extends Component {
   // ============================================================================
   // Max Pooling Layer 1: 2×2 max pooling -> Output: 12×12
   // ============================================================================
-  val pool1_config = MaxPool2x2Config(
+  val pool1_config = MaxPoolConfig(
     dataWidth = dataWidth,
     lineLength = 24,
+    kernelSize = 2,
     padding = 0,
-    stride = 2
+    stride = 2,
+    lineLengthDyn = false
   )
-  val pool1 = new MaxPooling2x2(pool1_config)
+  val pool1 = new MaxPool(pool1_config)
   pool1.io.EN := io.EN
   pool1.io.pre <> relu1.io.post
-  // pool1.io.LINEWIDTH := 24
 
   // ============================================================================
   // Convolution Layer 2: 5×5 -> Output: 8×8
   // ============================================================================
-  val meanKernel = Seq(1,1,1,1,1, 1,1,1,1,1, 1,1,1,1,1, 1,1,1,1,1, 1,1,1,1,1)
   val conv2_config = Conv2DConfig(
-        dataWidth = dataWidth,
-        convWidth = dataWidth,
-        lineLength = 12,
-        kernel = meanKernel,
-        kernelShift = 4,
-        kernelSize = 5,
-        padding = 1,
-        stride = 1)
-  val conv2 = new Conv2DDyn(conv2_config)
+    dataWidth = dataWidth,
+    convWidth = dataWidth,
+    lineLength = 12,
+    kernelSize = 5,
+    kernelShift = 4,
+    lineLengthDyn = false,
+    kernelDyn = true,
+    padding = 2,
+    stride = 1)
+  val conv2 = new Conv2DStream(conv2_config)
   conv2.io.EN := io.EN
   conv2.io.pre <> pool1.io.post
-  conv2.io.LINEWIDTH := 12
+  conv2.io.kernel <> io.kernel2
 
   // ============================================================================
   // ReLU Activation after Conv2
@@ -106,31 +109,17 @@ class SimpleLeNet5(config: LeNet5Config) extends Component {
   // ============================================================================
   // Max Pooling Layer 2: 2×2 max pooling -> Output: 4×4
   // ============================================================================
-  val pool2_config = MaxPool2x2Config(
+  val pool2_config = MaxPoolConfig(
     dataWidth = dataWidth,
     lineLength = 8,
+    kernelSize = 2,
     padding = 0,
-    stride = 2
+    stride = 2,
+    lineLengthDyn = false
   )
-  val pool2 = new MaxPooling2x2(pool2_config)
+  val pool2 = new MaxPool(pool2_config)
   pool2.io.EN := io.EN
   pool2.io.pre <> relu2.io.post
-  // pool2.io.LINEWIDTH := 8
-
-  // // ============================================================================
-  // // Flatten Layer: 4×4 -> 16
-  // // ============================================================================
-  // val flatten_output = Stream(Vec(SInt(dataWidth bits), 16))
-
-  // // Simplified flattening - collect 4x4 values
-  // val flatten_valid = Reg(Bool()) init(False)
-  // val flatten_data = Reg(Vec(SInt(dataWidth bits), 16))
-
-  // flatten_valid := pool2.io.post.valid
-  // flatten_data(0) := pool2.io.post.payload
-
-  // flatten_output.valid := flatten_valid
-  // flatten_output.payload := flatten_data
 
   // ============================================================================
   // Fully Connected Layer: 16 -> 10
@@ -149,10 +138,8 @@ class SimpleLeNet5(config: LeNet5Config) extends Component {
   val fc = new FullConnectionStream(fc_config)
   fc.io.EN := io.EN
   fc.io.pre <> pool2.io.post
-  fc.io.wb.weight.valid := False
-  fc.io.wb.weight.payload := 0
-  fc.io.wb.bias.valid := False
-  fc.io.wb.bias.payload := 0
+  fc.io.wb.weight <> io.weight
+  fc.io.wb.bias <> io.bias
 
   // ============================================================================
   // Output
@@ -160,195 +147,169 @@ class SimpleLeNet5(config: LeNet5Config) extends Component {
   io.output <> fc.io.post
 }
 
-// /**
-//  * LeNet-5 CNN Network
-//  */
-// class LeNet5(config: LeNet5Config) extends Component {
-//   import config._
-//   val io = new Bundle {
-//     val EN = in Bool()
-//     val input = slave(Stream(SInt(dataWidth bits)))
-//     val output = master(Stream(Vec(SInt(dataWidth bits), numClasses)))
-//     val conv1_weights = in(Vec(Vec(SInt(weightWidth bits), 25), 6))  // 6 filters, 5x5 each
-//     val conv1_bias = in(Vec(SInt(biasWidth bits), 6))
-//     val conv2_weights = in(Vec(Vec(SInt(weightWidth bits), 150), 12)) // 12 filters, 6*5*5 each
-//     val conv2_bias = in(Vec(SInt(biasWidth bits), 12))
-//     val fc_weights = in(Vec(SInt(weightWidth bits), 192 * numClasses))
-//     val fc_bias = in(Vec(SInt(biasWidth bits), numClasses))
-//   }
+/**
+ * LeNet-5 CNN Network
+ */
+class LeNet5(config: LeNet5Config) extends Component {
+  import config._
+  val io = new Bundle {
+    val EN = in Bool()
+    val input = slave(Stream(SInt(dataWidth bits)))
+    val output = master(Stream(SInt(dataWidth bits)))
+    val kernel1 = slave(Stream(SInt(dataWidth bits)))
+    val kernel2 = slave(Stream(SInt(dataWidth bits)))
+    val weight = slave(Stream(SInt(weightWidth bits)))
+    val bias = slave(Stream(SInt(biasWidth bits)))
+  }
 
-//   // Ready signal
-//   io.input.ready := True
+  // ============================================================================
+  // Convolution Layer 1: 6 kernels of 5×5 -> Output: 6×24×24
+  // ============================================================================
+  val convLayer1_config = Conv2DLayerConfig(
+    kernelNum = 6,
+    convConfig = Conv2DConfig(
+      dataWidth = 8,
+      convWidth = 8,
+      lineLength = 28,
+      kernelSize = 5,
+      kernelShift = 4,
+      lineLengthDyn = false,
+      kernelDyn = true,
+      padding = 1,
+      stride = 1))
+  val convLayer1 = new Conv2DLayerStreamZip(convLayer1_config)
+  convLayer1.io.EN := io.EN
+  convLayer1.io.pre <> io.input
+  convLayer1.io.kernel <> io.kernel1
 
-//   // ============================================================================
-//   // Convolution Layer 1: 6 filters of 5×5 -> Output: 6×24×24
-//   // ============================================================================
-//   val conv1_outputs = Vec(Stream(SInt(dataWidth bits)), 6)
-//   val conv1_config = Conv2DConfig(
-//     dataWidth = dataWidth,
-//     convWidth = dataWidth,
-//     lineLength = inputSize,
-//     kernel = Seq(1,1,1,1,1, 1,1,1,1,1, 1,1,1,1,1, 1,1,1,1,1, 1,1,1,1,1), // Placeholder
-//     kernelShift = 4,
-//     padding = 0,
-//     stride = 1
-//   )
+  // ============================================================================
+  // ReLU Activation after Conv1
+  // ============================================================================
+  val relu1_outputs = Vec(Stream(SInt(dataWidth bits)), 6)
+  val relu1_config = ReLUConfig(
+    dataWidth = dataWidth,
+    activationType = "relu"
+  )
+  for (i <- 0 until 6) {
+    val relu1 = new ReLU(relu1_config)
+    relu1.io.EN := io.EN
+    relu1.io.pre <> convLayer1.io.post(i)
+    relu1_outputs(i) <> relu1.io.post
+  }
 
-//   // Create 6 parallel convolution layers
-//   for (i <- 0 until 6) {
-//     val conv1 = new Conv2D3x3(conv1_config)
-//     conv1.io.EN := io.EN
-//     conv1.io.pre <> io.input
+  // ============================================================================
+  // Max Pooling Layer 1: 2×2 max pooling -> Output: 6×12×12
+  // ============================================================================
+  val pool1_outputs = Vec(Stream(SInt(dataWidth bits)), 6)
+  val pool1_config = MaxPoolConfig(
+    dataWidth = dataWidth,
+    lineLength = 24,
+    kernelSize = 2,
+    padding = 0,
+    stride = 2,
+    lineLengthDyn = false
+  )
+  for (i <- 0 until 6) {
+    val pool1 = new MaxPool(pool1_config)
+    pool1.io.EN := io.EN
+    pool1.io.pre <> relu1_outputs(i)
+    pool1_outputs(i) <> pool1.io.post
+  }
 
-//     // Connect weights and bias (simplified - in real implementation, weights would be properly connected)
-//     conv1_outputs(i) <> conv1.io.post
-//   }
+  // ============================================================================
+  // Convolution Layer 2: 12 kernels of 5×5 -> Output: 12×8×8
+  // ============================================================================
+  val convLayer2_config = Conv2DLayerConfig(
+    kernelNum = 12,
+    convConfig = Conv2DConfig(
+      dataWidth = 8,
+      convWidth = 8,
+      lineLength = 28,
+      kernelSize = 5,
+      kernelShift = 4,
+      lineLengthDyn = false,
+      kernelDyn = true,
+      padding = 1,
+      stride = 1))
+  val convLayer2 = new Conv2DLayerStreamZipMultiIn(convLayer2_config)
+  convLayer2.io.EN := io.EN
+  convLayer2.io.kernel <> io.kernel2
+  for (i <- 0 until 6) {
+    convLayer2.io.pre(i) <> pool1_outputs(i)
+  }
+  for (i <- 0 until 6) {
+    convLayer2.io.pre(i+6).payload := pool1_outputs(i).payload
+    convLayer2.io.pre(i+6).valid := pool1_outputs(i).valid
+  }
 
-//   // ============================================================================
-//   // ReLU Activation after Conv1
-//   // ============================================================================
-//   val conv1_relu_outputs = Vec(Stream(SInt(dataWidth bits)), 6)
-//   val relu_config = ReLUConfig(
-//     dataWidth = dataWidth,
-//     activationType = "relu"
-//   )
+  // ============================================================================
+  // ReLU Activation after Conv2
+  // ============================================================================
+  val relu2_outputs = Vec(Stream(SInt(dataWidth bits)), 12)
+  val relu2_config = ReLUConfig(
+    dataWidth = dataWidth,
+    activationType = "relu"
+  )
+  for (i <- 0 until 12) {
+    val relu2 = new ReLU(relu2_config)
+    relu2.io.EN := io.EN
+    relu2.io.pre <> convLayer2.io.post(i)
+    relu2_outputs(i) <> relu2.io.post
+  }
 
-//   for (i <- 0 until 6) {
-//     val relu1 = new ReLU(relu_config)
-//     relu1.io.EN := io.EN
-//     relu1.io.pre <> conv1_outputs(i)
-//     conv1_relu_outputs(i) <> relu1.io.post
-//   }
+  // ============================================================================
+  // Max Pooling Layer 2: 2×2 max pooling -> Output: 12×4×4
+  // ============================================================================
+  val pool2_outputs = Vec(Stream(SInt(dataWidth bits)), 12)
+  val pool2_config = MaxPoolConfig(
+    dataWidth = dataWidth,
+    lineLength = 8,
+    kernelSize = 2,
+    padding = 0,
+    stride = 2,
+    lineLengthDyn = false
+  )
+  for (i <- 0 until 12) {
+    val pool2 = new MaxPool(pool2_config)
+    pool2.io.EN := io.EN
+    pool2.io.pre <> relu2_outputs(i)
+    pool2_outputs(i) <> pool2.io.post
+  }
 
-//   // ============================================================================
-//   // Max Pooling Layer 1: 2×2 max pooling -> Output: 6×12×12
-//   // ============================================================================
-//   val pool1_outputs = Vec(Stream(SInt(dataWidth bits)), 6)
-//   val pool1_config = MaxPool2x2Config(
-//     dataWidth = dataWidth,
-//     lineLength = 24, // Conv1 output size
-//     padding = 0,
-//     stride = 2
-//   )
+  // ============================================================================
+  // Fully Connected Layer: 12×4×4 -> 10
+  // ============================================================================
+  val fc_config = FullConnectionConfig(
+    inputWidth = dataWidth,
+    outputWidth = dataWidth,
+    weightWidth = weightWidth,
+    biasWidth = biasWidth,
+    inputSize = 4*4*12,
+    outputSize = numClasses,
+    useBias = useBias,
+    signed = signed,
+    quantization = quantization
+  )
+  val fc = new FullConnectionStreamMultiIn(12, fc_config)
+  fc.io.EN := io.EN
+  fc.io.wb.weight <> io.weight
+  fc.io.wb.bias <> io.bias
+  for (i <- 0 until 12) {
+    fc.io.pre(i) <> pool2_outputs(i)
+  }
 
-//   for (i <- 0 until 6) {
-//     val pool1 = new MaxPooling2x2(pool1_config)
-//     pool1.io.EN := io.EN
-//     pool1.io.pre <> conv1_relu_outputs(i)
-//     pool1_outputs(i) <> pool1.io.post
-//   }
-
-//   // ============================================================================
-//   // Convolution Layer 2: 12 filters of 5×5 -> Output: 12×8×8
-//   // ============================================================================
-//   val conv2_outputs = Vec(Stream(SInt(dataWidth bits)), 12)
-//   val conv2_config = Conv2DConfig(
-//     dataWidth = dataWidth,
-//     convWidth = dataWidth,
-//     lineLength = 12, // Pool1 output size
-//     kernel = Seq(1,1,1,1,1, 1,1,1,1,1, 1,1,1,1,1, 1,1,1,1,1, 1,1,1,1,1), // Placeholder
-//     kernelShift = 4,
-//     padding = 0,
-//     stride = 1
-//   )
-
-//   // Create 12 parallel convolution layers
-//   for (i <- 0 until 12) {
-//     val conv2 = new Conv2D3x3(conv2_config)
-//     conv2.io.EN := io.EN
-
-//     // Connect to all 6 channels from pool1 (simplified)
-//     conv2.io.pre <> pool1_outputs(i % 6)
-//     conv2_outputs(i) <> conv2.io.post
-//   }
-
-//   // ============================================================================
-//   // ReLU Activation after Conv2
-//   // ============================================================================
-//   val conv2_relu_outputs = Vec(Stream(SInt(dataWidth bits)), 12)
-
-//   for (i <- 0 until 12) {
-//     val relu2 = new ReLU(relu_config)
-//     relu2.io.EN := io.EN
-//     relu2.io.pre <> conv2_outputs(i)
-//     conv2_relu_outputs(i) <> relu2.io.post
-//   }
-
-//   // ============================================================================
-//   // Max Pooling Layer 2: 2×2 max pooling -> Output: 12×4×4
-//   // ============================================================================
-//   val pool2_outputs = Vec(Stream(SInt(dataWidth bits)), 12)
-//   val pool2_config = MaxPool2x2Config(
-//     dataWidth = dataWidth,
-//     lineLength = 8, // Conv2 output size
-//     padding = 0,
-//     stride = 2
-//   )
-
-//   for (i <- 0 until 12) {
-//     val pool2 = new MaxPooling2x2(pool2_config)
-//     pool2.io.EN := io.EN
-//     pool2.io.pre <> conv2_relu_outputs(i)
-//     pool2_outputs(i) <> pool2.io.post
-//   }
-
-//   // ============================================================================
-//   // Flatten Layer: 12×4×4 -> 192
-//   // ============================================================================
-//   val flatten_output = Stream(Vec(SInt(dataWidth bits), 192))
-
-//   // Flatten logic: collect all 12 channels of 4x4 = 192 values
-//   val flatten_valid = Reg(Bool()) init(False)
-//   val flatten_data = Reg(Vec(SInt(dataWidth bits), 192))
-
-//   // Simplified flattening - in real implementation, this would properly collect all values
-//   flatten_valid := pool2_outputs(0).valid
-//   for (i <- 0 until 192) {
-//     flatten_data(i) := pool2_outputs(i % 12).payload
-//   }
-
-//   flatten_output.valid := flatten_valid
-//   flatten_output.payload := flatten_data
-
-//   // ============================================================================
-//   // Fully Connected Layer: 192 -> 10
-//   // ============================================================================
-//   val fc_config = FullConnectionConfig(
-//     inputWidth = dataWidth,
-//     outputWidth = dataWidth,
-//     weightWidth = weightWidth,
-//     biasWidth = biasWidth,
-//     inputSize = 192,
-//     outputSize = numClasses,
-//     useBias = useBias,
-//     signed = signed,
-//     quantization = quantization
-//   )
-
-//   val fc = new FullConnection(fc_config)
-//   fc.io.EN := io.EN
-//   fc.io.pre <> flatten_output
-
-//   // Connect weights and bias
-//   for (i <- 0 until 192 * numClasses) {
-//     fc.io.weights.weights(i) := io.fc_weights(i)
-//   }
-//   for (i <- 0 until numClasses) {
-//     fc.io.weights.bias(i) := io.fc_bias(i)
-//   }
-
-//   // ============================================================================
-//   // Output
-//   // ============================================================================
-//   io.output <> fc.io.post
-// }
+  // ============================================================================
+  // Output
+  // ============================================================================
+  io.output <> fc.io.post
+}
 
 
-
+/* ----------------------------------------------------------------------------- */
+/* ---------------------------------- Demo Gen --------------------------------- */
+/* ----------------------------------------------------------------------------- */
 object LeNet5Gen {
   def main(args: Array[String]): Unit = {
-    println("Generating LeNet-5 CNN network...")
-
     val config = LeNet5Config(
       dataWidth = 8,
       weightWidth = 8,
@@ -359,21 +320,24 @@ object LeNet5Gen {
       signed = false,
       quantization = false
     )
-    // Generate simplified LeNet-5
+    // // Generate simplified LeNet-5
+    // SpinalConfig(targetDirectory = "rtl").generateVerilog(
+    //   new SimpleLeNet5(config)
+    // )
+    // Generate complete LeNet-5
     SpinalConfig(targetDirectory = "rtl").generateVerilog(
-      new SimpleLeNet5(config)
+      new LeNet5(config)
     )
-
-    println("LeNet-5 network generated successfully!")
-    println("=== LeNet-5 Architecture ===")
-    println("Input: 28x28 grayscale image")
-    println("Conv1: 5x5 convolution -> 24x24")
-    println("ReLU1: Activation")
-    println("Pool1: 2x2 max pooling -> 12x12")
-    println("Conv2: 5x5 convolution -> 8x8")
-    println("ReLU2: Activation")
-    println("Pool2: 2x2 max pooling -> 4x4")
-    println("Flatten: 4x4 -> 16")
-    println("FC: 16 -> 10 (output classes)")
+    // println("LeNet-5 network generated successfully!")
+    // println("=== LeNet-5 Architecture ===")
+    // println("Input: 28x28 grayscale image")
+    // println("Conv1: 5x5 convolution -> 24x24")
+    // println("ReLU1: Activation")
+    // println("Pool1: 2x2 max pooling -> 12x12")
+    // println("Conv2: 5x5 convolution -> 8x8")
+    // println("ReLU2: Activation")
+    // println("Pool2: 2x2 max pooling -> 4x4")
+    // println("Flatten: 4x4 -> 16")
+    // println("FC: 16 -> 10 (output classes)")
   }
 }

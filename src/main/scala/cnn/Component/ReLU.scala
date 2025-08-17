@@ -109,10 +109,12 @@ class BatchReLU(config: ReLUConfig, numChannels: Int) extends Component {
   io.post.payload := Mux(io.EN, activatedChannels, io.pre.payload)
 }
 
+
+/* ----------------------------------------------------------------------------- */
+/* ---------------------------------- Demo Gen --------------------------------- */
+/* ----------------------------------------------------------------------------- */
 // object ReLUGen {
 //   def main(args: Array[String]): Unit = {
-//     println("Generating ReLU modules...")
-
 //     // Standard ReLU
 //     SpinalConfig(targetDirectory = "rtl").generateVerilog(
 //       new ReLU(ReLUConfig(
@@ -146,7 +148,5 @@ class BatchReLU(config: ReLUConfig, numChannels: Int) extends Component {
 //     //     dataWidth = 8,
 //     //     activationType = "relu"), 3)
 //     // ).printPruned()
-
-//     println("ReLU modules generated successfully!")
 //   }
 // }

@@ -176,7 +176,6 @@ class FullConnectionStream(config: FullConnectionConfig) extends Component {
   val computing = Reg(Bool()) init(False)
   io.post.valid := computing
   io.post.payload := outputReg
-
   when(frameReady && !computing) {
     computing := True
     outputCnt.clear()
@@ -188,7 +187,89 @@ class FullConnectionStream(config: FullConnectionConfig) extends Component {
       weightMem.readSync((outputCnt.value * inputSize + j).resized) * inputVec(j)
     ).reduce(_ + _)
     val acc = dotProduct.resize(outputWidth)
-    val withBias = if (useBias) acc + biasMem(outputCnt.value).resize(outputWidth) else acc
+    val withBias = if (useBias) acc + biasMem.readSync(outputCnt.value).resize(outputWidth) else acc
+    val quantized = if (quantization) (withBias >> weightWidth).asUInt.resize(outputWidth) else withBias.asUInt.resize(outputWidth)
+    outputReg := quantized.asSInt
+
+    outputCnt.increment()
+    when(outputCnt.willOverflow) {
+      computing := False
+      frameReady := False
+      inputCnt.clear()
+    }
+  }
+}
+
+class FullConnectionStreamMultiIn(kernelNum: Int, config: FullConnectionConfig) extends Component { 
+  import config._
+  val io = new Bundle {
+    val EN   = in Bool()
+    val wb   = slave(WeightBiasStreamInterface(weightWidth, biasWidth, useBias))
+    val pre  = Vec(slave(Stream(SInt(inputWidth bits))), kernelNum)
+    val post = master(Stream(SInt(outputWidth bits)))
+  }
+
+  // Storage for weights and bias
+  val weightMem = Mem(SInt(weightWidth bits), inputSize * outputSize)
+  val biasMem   = if (useBias) Mem(SInt(biasWidth bits), outputSize) else null
+  val weightCnt = Counter(inputSize * outputSize)
+  val biasCnt   = if (useBias) Counter(outputSize) else null
+
+  // Streaming reception weighting
+  io.wb.weight.ready := True
+  when(io.wb.weight.valid && io.wb.weight.ready) {
+    weightMem.write(weightCnt.value, io.wb.weight.payload)
+    weightCnt.increment()
+  }
+  if (useBias) {
+    io.wb.bias.ready := True
+    when(io.wb.bias.valid && io.wb.bias.ready) {
+      biasMem.write(biasCnt.value, io.wb.bias.payload)
+      biasCnt.increment()
+    }
+  }
+
+  // Input buffer
+  val inputVec = Vec(Vec(Reg(SInt(inputWidth bits)) init(0), inputSize), kernelNum)
+  val inputCnt = Counter(inputSize)
+  val frameReady = Reg(Bool()) init(False)
+  for (i <- 0 until kernelNum) {
+    io.pre(i).ready := !frameReady
+  }
+  when(io.pre(0).valid && io.pre(0).ready) {
+    for (i <- 0 until kernelNum) {
+      inputVec(i)(inputCnt.value) := io.pre(i).payload
+    }
+    inputCnt.increment()
+    when(inputCnt.willOverflow) {
+      frameReady := True
+    }
+  }
+
+  // Output buffer
+  val outputCnt = Counter(outputSize)
+  val outputReg = Reg(SInt(outputWidth bits)) init(0)
+  val computing = Reg(Bool()) init(False)
+  io.post.valid := computing
+  io.post.payload := outputReg
+  when(frameReady && !computing) {
+    computing := True
+    outputCnt.clear()
+  }
+
+  when(computing && io.post.ready) {
+    // Compute each output neuron
+    val dotProducts = for(k <- 0 until kernelNum) yield {
+      (0 until inputSize).map(j =>
+        weightMem.readSync((outputCnt.value * inputSize + j).resized) * inputVec(k)(j)
+      ).reduce(_ + _)
+    }
+    // val dotProduct = (0 until inputSize).map(j =>
+    //   weightMem.readSync((outputCnt.value * inputSize + j).resized) * inputVec(j)
+    // ).reduce(_ + _)
+    val dotSum = dotProducts.reduce(_ + _)
+    val acc = dotSum.resize(outputWidth)
+    val withBias = if (useBias) acc + biasMem.readSync(outputCnt.value).resize(outputWidth) else acc
     val quantized = if (quantization) (withBias >> weightWidth).asUInt.resize(outputWidth) else withBias.asUInt.resize(outputWidth)
     outputReg := quantized.asSInt
 
@@ -329,7 +410,7 @@ class PipelinedFullConnectionStream(config: FullConnectionConfig) extends Compon
       weightMem.readSync(stage1_idx * inputSize + j) * inputVec(j)
     ).reduce(_ + _)
     val acc = dotProduct.resize(outputWidth)
-    val withBias = if (useBias) acc + biasMem(stage1_idx).resize(outputWidth) else acc
+    val withBias = if (useBias) acc + biasMem.readSync(stage1_idx).resize(outputWidth) else acc
     val quantized = if (quantization) (withBias >> weightWidth).asUInt.resize(outputWidth) else withBias.asUInt.resize(outputWidth)
     stage2_val := quantized.asSInt
     stage2_idx := stage1_idx
@@ -353,10 +434,11 @@ class PipelinedFullConnectionStream(config: FullConnectionConfig) extends Compon
 }
 
 
+/* ----------------------------------------------------------------------------- */
+/* ---------------------------------- Demo Gen --------------------------------- */
+/* ----------------------------------------------------------------------------- */
 // object FullConnectionGen {
 //   def main(args: Array[String]): Unit = {
-//     println("Generating FullConnection modules...")
-
 //     // // Basic full connection layer
 //     // SpinalConfig(targetDirectory = "rtl").generateVerilog(
 //     //   new FullConnection(FullConnectionConfig(
@@ -384,9 +466,22 @@ class PipelinedFullConnectionStream(config: FullConnectionConfig) extends Compon
 //     //     quantization = true))
 //     // ).printPruned()
 
-//     // Basic full connection layer streaming weights/bias
+//     // // Basic full connection layer streaming weights/bias
+//     // SpinalConfig(targetDirectory = "rtl").generateVerilog(
+//     //   new FullConnectionStream(FullConnectionConfig(
+//     //     inputWidth = 8,
+//     //     outputWidth = 16,
+//     //     weightWidth = 8,
+//     //     biasWidth = 8,
+//     //     inputSize = 192,  // 4x4x12 flattened
+//     //     outputSize = 10,  // 10 classes
+//     //     useBias = true,
+//     //     signed = false,
+//     //     quantization = false))
+//     // ).printPruned()
+//     // Basic full connection layer streaming weights/bias with multi-input
 //     SpinalConfig(targetDirectory = "rtl").generateVerilog(
-//       new FullConnectionStream(FullConnectionConfig(
+//       new FullConnectionStreamMultiIn(6, FullConnectionConfig(
 //         inputWidth = 8,
 //         outputWidth = 16,
 //         weightWidth = 8,
@@ -410,7 +505,5 @@ class PipelinedFullConnectionStream(config: FullConnectionConfig) extends Compon
 //     //     signed = false,
 //     //     quantization = true))
 //     // ).printPruned()
-
-//     println("FullConnection modules generated successfully!")
 //   }
 // }

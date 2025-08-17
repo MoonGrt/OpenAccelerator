@@ -202,10 +202,13 @@ class cyber(config: cyberConfig) extends Component {
       resetCtrl.coreResetUnbuffered setWhen (core.io.debugResetOut)
     }
   }
-
   io.jtag <> axi.jtagCtrl.io.jtag
 }
 
+
+/* ----------------------------------------------------------------------------- */
+/* ---------------------------------- Demo Gen --------------------------------- */
+/* ----------------------------------------------------------------------------- */
 object cyber {
   def main(args: Array[String]) {
     val config =

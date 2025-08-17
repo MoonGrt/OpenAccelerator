@@ -4,7 +4,7 @@ import struct
 from PIL import Image
 import os
 
-dataset_path = 'C:/Users/Administrator/Desktop/MNIST/'  # 需要修改的路径:解压的数据集所在文件夹
+dataset_path = '../MNIST/'  # 需要修改的路径:解压的数据集所在文件夹
 data_file = dataset_path + 'train-images.idx3-ubyte' 
 
 # It's 47040016B, but we should set to 47040000B
