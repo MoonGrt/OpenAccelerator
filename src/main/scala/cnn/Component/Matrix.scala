@@ -20,7 +20,7 @@ class ShiftRamDyn(dataWidth: Int, lineLengthBits: Int) extends Component {
   val wrPtr = RegInit(U(0, lineLengthBits bits))
   val rdPtr = RegInit(U(0, lineLengthBits bits))
 
-  io.Q := mem(rdPtr)
+  io.Q := mem.readSync(rdPtr)
   when(io.CE) {
     // write then read (same cycle behavior as original Verilog)
     mem(wrPtr) := io.D
@@ -50,6 +50,26 @@ class ShiftRam(dataWidth: Int, lineLength: Int) extends Component {
     // increment with wrap
     when(wrPtr === (lineLength - 1 ) - 1) { wrPtr := U(0) } .otherwise { wrPtr := wrPtr + 1 }
     when(rdPtr === (lineLength - 1 ) - 1) { rdPtr := U(0) } .otherwise { rdPtr := rdPtr + 1 }
+  }
+}
+
+/* -------------------------------------------------------------------------- */
+/* ------------------------------ Shift Column ------------------------------ */
+/* -------------------------------------------------------------------------- */
+/**
+  * ShiftColumn2x2Interface is a bundle for the shift column output signals.
+  */
+case class ShiftColumn2x2Interface(dataWidth: Int) extends Bundle with IMasterSlave {
+  val c1 = SInt(dataWidth bits)
+  val c2 = SInt(dataWidth bits)
+
+  override def asMaster() = this.asOutput()
+  override def asSlave() = this.asInput()
+  override def clone = ShiftColumn2x2Interface(dataWidth)
+
+  def << (that: ShiftColumn2x2Interface): Unit = {
+    this.c1 := that.c1
+    this.c2 := that.c2
   }
 }
 
@@ -85,7 +105,7 @@ class Matrix2x2Dyn(
   stride: Int
 ) extends Component {
   val io = new Bundle {
-    val IMG_HDISP = in UInt(lineLengthBits bits)
+    val LINEWIDTH = in UInt(lineLengthBits bits)
     val pre = slave(Stream(SInt(dataWidth bits)))
     val matrix_de = out Bool()
     val matrix = master(Matrix2x2Interface(dataWidth))
@@ -102,7 +122,7 @@ class Matrix2x2Dyn(
   val ram1 = new ShiftRamDyn(dataWidth, lineLengthBits)
   ram1.io.CE := io.pre.valid
   ram1.io.D  := row2
-  ram1.io.LINE_LENGTH := io.IMG_HDISP
+  ram1.io.LINE_LENGTH := io.LINEWIDTH
   row1 := ram1.io.Q
 
   // two-cycle sync for de
@@ -268,7 +288,7 @@ class Matrix3x3Dyn(
   require(padding <= (kernelSize - 1 ) / 2, "padding must be less than (kernelSize - 1 ) / 2")
 
   val io = new Bundle {
-    val IMG_HDISP = in UInt(lineLengthBits bits)
+    val LINEWIDTH = in UInt(lineLengthBits bits)
     val pre = slave(Stream(SInt(dataWidth bits)))
     val matrix_de = out Bool()
     val matrix = master(Matrix3x3Interface(dataWidth))
@@ -286,13 +306,13 @@ class Matrix3x3Dyn(
   val ram2 = new ShiftRamDyn(dataWidth, lineLengthBits)
   ram2.io.CE := io.pre.valid
   ram2.io.D  := row3
-  ram2.io.LINE_LENGTH := io.IMG_HDISP
+  ram2.io.LINE_LENGTH := io.LINEWIDTH
   row2 := ram2.io.Q
 
   val ram1 = new ShiftRamDyn(dataWidth, lineLengthBits)
   ram1.io.CE := io.pre.valid
   ram1.io.D  := row2
-  ram1.io.LINE_LENGTH := io.IMG_HDISP
+  ram1.io.LINE_LENGTH := io.LINEWIDTH
   row1 := ram1.io.Q
 
   // two-cycle sync for de
@@ -442,9 +462,6 @@ class Matrix3x3(
 
 
 
-
-
-
 // General Matrix Interface
 case class MatrixInterface(dataWidth: Int, kernelSize: Int) extends Bundle with IMasterSlave {
   val m = Vec(Vec(SInt(dataWidth bits), kernelSize), kernelSize)
@@ -469,7 +486,7 @@ class MatrixDyn(
   stride: Int = 1
 ) extends Component {
   val io = new Bundle {
-    val IMG_HDISP = in UInt(lineLengthBits bits)
+    val LINEWIDTH = in UInt(lineLengthBits bits)
     val pre = slave(Stream(SInt(dataWidth bits)))
     val matrix_de = out Bool()
     val matrix = master(MatrixInterface(dataWidth, kernelSize))
@@ -492,7 +509,7 @@ class MatrixDyn(
     } else {
       ram.io.D := rows(idx).asBits
     }
-    ram.io.LINE_LENGTH := io.IMG_HDISP
+    ram.io.LINE_LENGTH := io.LINEWIDTH
     rows(idx+1) := ram.io.Q
   }
   rows(0) := io.pre.payload.asBits

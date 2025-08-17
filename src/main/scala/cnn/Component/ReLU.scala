@@ -119,7 +119,6 @@ class BatchReLU(config: ReLUConfig, numChannels: Int) extends Component {
 //         dataWidth = 8,
 //         activationType = "relu"))
 //     ).printPruned()
-
 //     // // Leaky ReLU
 //     // SpinalConfig(targetDirectory = "rtl").generateVerilog(
 //     //   new ReLU(ReLUConfig(
@@ -127,7 +126,6 @@ class BatchReLU(config: ReLUConfig, numChannels: Int) extends Component {
 //     //     activationType = "leaky_relu",
 //     //     alpha = 0.01))
 //     // ).printPruned()
-
 //     // // Parametric ReLU
 //     // SpinalConfig(targetDirectory = "rtl").generateVerilog(
 //     //   new ReLU(ReLUConfig(
@@ -135,7 +133,6 @@ class BatchReLU(config: ReLUConfig, numChannels: Int) extends Component {
 //     //     activationType = "parametric_relu",
 //     //     alpha = 0.01))
 //     // ).printPruned()
-
 //     // // ELU
 //     // SpinalConfig(targetDirectory = "rtl").generateVerilog(
 //     //   new ReLU(ReLUConfig(
@@ -143,7 +140,6 @@ class BatchReLU(config: ReLUConfig, numChannels: Int) extends Component {
 //     //     activationType = "elu",
 //     //     alpha = 1.0))
 //     // ).printPruned()
-
 //     // // Batch ReLU for 3 channels
 //     // SpinalConfig(targetDirectory = "rtl").generateVerilog(
 //     //   new BatchReLU(ReLUConfig(

@@ -66,7 +66,7 @@ class MaxPooling2x2(config: MaxPool2x2Config) extends Component {
 //     SpinalConfig(targetDirectory = "rtl").generateVerilog(
 //       new MaxPooling2x2(MaxPool2x2Config(
 //         dataWidth = 8,
-//         lineLength = 480,
+//         lineLength = 24,
 //         padding = 0,
 //         stride = 2))
 //     ).printPruned()
@@ -143,7 +143,7 @@ class MaxPooling3x3(config: MaxPool3x3Config) extends Component {
 //     SpinalConfig(targetDirectory = "rtl").generateVerilog(
 //       new MaxPooling3x3(MaxPool3x3Config(
 //         dataWidth = 8,
-//         lineLength = 480,
+//         lineLength = 24,
 //         padding = 0,
 //         stride = 3))
 //     ).printPruned()

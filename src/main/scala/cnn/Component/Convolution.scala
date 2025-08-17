@@ -62,18 +62,18 @@ case class Conv2DConfig(
   dataWidth    : Int,             // bits per pixel
   convWidth    : Int,             // bits per convolution output
   lineLength   : Int,             // number of pixels per line
-  kernel       : Seq[Int],        // 9 elements, row-major: k11,k12,k13,k21,...,k33
+  kernel       : Seq[Int],        // elements of kernel (3x3, 5x5, etc.)
   kernelShift  : Int = 4,         // right shift to divide by kernel sum (e.g. 16 -> shift 4)
+  kernelSize   : Int = 3,         // size of kernel (3x3, 5x5, etc.)
   insigned     : Boolean = true,  // input signed or unsigned
   absolute     : Boolean = false, // absolute value of convolution output
-  leftresize   : Boolean = true,  // left shift to increase precision (e.g. 16 -> shift 4)
-  padding      : Int = 1,         // padding size (0=no padding, 1=same padding for 3x3 kernel)
+  leftresize   : Boolean = true,  // left shift to increase precision
+  padding      : Int = 1,         // padding size (0=no padding, 1=same padding for (3x3, 5x5, etc) kernel)
   stride       : Int = 1          // stride size (1=no stride, 2=skip every other pixel, etc.)
 )
 
 class Conv2D3x3(config: Conv2DConfig) extends Component {
   import config._
-  var kernelSize = 3
   require(padding <= (kernelSize - 1 ) / 2, "padding must be less than (kernelSize - 1 ) / 2")
 
   val io = new Bundle {
@@ -117,21 +117,84 @@ class Conv2D3x3(config: Conv2DConfig) extends Component {
   io.post.payload := Mux(io.EN, convolution, io.pre.payload.resized)
 }
 
-object Conv2DGen {
-  def main(args: Array[String]): Unit = {
-    val meanKernel = Seq(1,1,1, 1,1,1, 1,1,1) // Identity kernel: 1 1 1 / 1 1 1 / 1 1 1
-    val gaussianKernel = Seq(1,2,1, 2,4,2, 1,2,1) // Gaussian kernel: 1 2 1 / 2 4 2 / 1 2 1
-    val sharpenKernel = Seq(0,-1,0, -1,5,-1, 0,-1,0) // Sharpen kernel: 0 -1 0 / -1 5 -1 / 0 -1 0
-    SpinalConfig(targetDirectory = "rtl").generateVerilog(
-      new Conv2D3x3(Conv2DConfig(
-        dataWidth = 8,
-        convWidth = 10,
-        lineLength = 480,
-        kernel = gaussianKernel,
-        kernelShift = 4,
-        insigned = false,
-        padding = 1,
-        stride = 1))
-    ).printPruned()
+class Conv2DDyn(config: Conv2DConfig) extends Component {
+  import config._
+  require(kernel.length == kernelSize * kernelSize, s"kernel length must match kernelSize*kernelSize")
+  require(padding <= (kernelSize - 1) / 2, "padding must be less than (kernelSize - 1)/2")
+
+  val io = new Bundle {
+    val EN   = in Bool()
+    val pre  = slave(Stream(SInt(dataWidth bits)))
+    val post = master(Stream(SInt(convWidth bits)))
+    val LINEWIDTH = in UInt(log2Up(lineLength) bits)
   }
+
+  // instantiate dynamic matrix module
+  val m = new MatrixDyn(dataWidth, log2Up(lineLength), kernelSize, padding, stride)
+  m.io.pre <> io.pre
+  m.io.LINEWIDTH := io.LINEWIDTH
+
+  // convolution compute for each channel
+  def conv(m: MatrixDyn, kernel: Seq[Int]) = {
+    val convm = if (insigned) {
+      MatrixInterface(dataWidth, kernelSize)
+    } else {
+      MatrixInterface(dataWidth + 1, kernelSize)
+    }
+    convm << m.io.matrix.resized
+    val pixels = (0 until kernelSize).flatMap { i =>
+      (0 until kernelSize).map { j =>
+        convm.m(i)(j)
+      }
+    }
+    val acc = pixels.zip(kernel).map { case (p, k) => p * k }.reduce(_ + _).resize(32)
+    val shifted = (acc >> kernelShift)
+    val clipped = shifted.resize(convWidth)
+    // if(absolute) clipped.abs else clipped
+    clipped
+  }
+
+  val convolution = conv(m, kernel)
+
+  // delay de by one cycle to match data latency and support EN bypass
+  val matrix_de = Reg(Bool()) init(False)
+  matrix_de := m.io.matrix_de
+
+  // Stream output logic
+  io.post.valid := Mux(io.EN, matrix_de, io.pre.valid)
+  io.post.payload := Mux(io.EN, convolution, io.pre.payload.resized)
 }
+
+
+// object Conv2DGen {
+//   def main(args: Array[String]): Unit = {
+//     val meanKernel = Seq(1,1,1, 1,1,1, 1,1,1) // Identity kernel: 1 1 1 / 1 1 1 / 1 1 1
+//     val gaussianKernel = Seq(1,2,1, 2,4,2, 1,2,1) // Gaussian kernel: 1 2 1 / 2 4 2 / 1 2 1
+//     val sharpenKernel = Seq(0,-1,0, -1,5,-1, 0,-1,0) // Sharpen kernel: 0 -1 0 / -1 5 -1 / 0 -1 0
+//     val meanKernel5x5 = Seq(1,1,1,1,1, 1,1,1,1,1, 1,1,1,1,1, 1,1,1,1,1, 1,1,1,1,1)
+//     val gaussianKernel5x5 = Seq(1,4,6,4,1, 4,16,24,16,4, 6,24,36,24,6, 4,16,24,16,4, 1,4,6,4,1) // Gaussian kernel: 1 4 6 4 1 / 4 16 24 16 4 / 6 24 36 24 6 / 4 16 24 16 4 / 1 4 6 4 1
+//     // SpinalConfig(targetDirectory = "rtl").generateVerilog(
+//     //   new Conv2D3x3(Conv2DConfig(
+//     //     dataWidth = 8,
+//     //     convWidth = 10,
+//     //     lineLength = 480,
+//     //     kernel = gaussianKernel,
+//     //     kernelShift = 4,
+//     //     insigned = false,
+//     //     padding = 1,
+//     //     stride = 1))
+//     // ).printPruned()
+//     SpinalConfig(targetDirectory = "rtl").generateVerilog(
+//       new Conv2DDyn(Conv2DConfig(
+//         dataWidth = 8,
+//         convWidth = 10,
+//         lineLength = 28,
+//         kernel = gaussianKernel5x5,
+//         kernelShift = 4,
+//         kernelSize = 5,
+//         insigned = false,
+//         padding = 1,
+//         stride = 1))
+//     ).printPruned()
+//   }
+// }
