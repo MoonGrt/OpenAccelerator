@@ -15,8 +15,8 @@ import spinal.lib._
 case class FullConnectionConfig(
   inputWidth   : Int,             // bits per input element
   outputWidth  : Int,             // bits per output element
-  weightWidth  : Int,             // bits per weight element
-  biasWidth    : Int,             // bits per bias element
+  weightWidth  : Int = 8,         // bits per weight element
+  biasWidth    : Int = 8,         // bits per bias element
   inputSize    : Int,             // number of input neurons
   outputSize   : Int,             // number of output neurons
   useBias      : Boolean = true,  // whether to use bias
@@ -126,7 +126,7 @@ class FullConnection(config: FullConnectionConfig) extends Component {
 }
 
 /**
- * Full Connection module (streaming weights/bias)
+ * Full Connection module (streaming weights/bias) with multiple kernel inputs
  */
 class FullConnectionStream(config: FullConnectionConfig) extends Component {
   import config._
@@ -137,299 +137,152 @@ class FullConnectionStream(config: FullConnectionConfig) extends Component {
     val post = master(Stream(SInt(outputWidth bits)))
   }
 
+  // Ready signal
+  io.pre.ready := True
+
   // Storage for weights and bias
   val weightMem = Mem(SInt(weightWidth bits), inputSize * outputSize)
-  val biasMem   = if (useBias) Mem(SInt(biasWidth bits), outputSize) else null
   val weightCnt = Counter(inputSize * outputSize)
+  val biasMem   = if (useBias) Mem(SInt(biasWidth bits), outputSize) else null
   val biasCnt   = if (useBias) Counter(outputSize) else null
 
-  // Streaming reception weighting
+  // Receive weights and biases
   io.wb.weight.ready := True
-  when(io.wb.weight.valid && io.wb.weight.ready) {
+  when(io.wb.weight.valid) {
     weightMem.write(weightCnt.value, io.wb.weight.payload)
     weightCnt.increment()
   }
   if (useBias) {
     io.wb.bias.ready := True
-    when(io.wb.bias.valid && io.wb.bias.ready) {
+    when(io.wb.bias.valid) {
       biasMem.write(biasCnt.value, io.wb.bias.payload)
       biasCnt.increment()
     }
   }
 
-  // Input buffer
-  val inputVec = Vec(Reg(SInt(inputWidth bits)) init(0), inputSize)
+  // Stream computing
+  val computing = RegInit(False)
+  val outputCnt = Counter(outputSize)
+  // Temporary accumulator register for each output neuron
+  val accVec = Reg(SInt(outputWidth bits)) init(0)
+  // Record how many data groups each stream has received so far.
   val inputCnt = Counter(inputSize)
-  val frameReady = Reg(Bool()) init(False)
-  io.pre.ready := !frameReady
-  when(io.pre.valid && io.pre.ready) {
-    inputVec(inputCnt.value) := io.pre.payload
+
+  // When EN is active and all inputs are valid, accumulate to the register.
+  io.post.valid := False
+  io.post.payload := 0
+  when(io.EN && io.pre.valid) {
+    accVec := (accVec + weightMem.readSync(inputCnt.resized) * io.pre.payload).resized
     inputCnt.increment()
     when(inputCnt.willOverflow) {
-      frameReady := True
-    }
-  }
-
-  // Output buffer
-  val outputCnt = Counter(outputSize)
-  val outputReg = Reg(SInt(outputWidth bits)) init(0)
-  val computing = Reg(Bool()) init(False)
-  io.post.valid := computing
-  io.post.payload := outputReg
-  when(frameReady && !computing) {
-    computing := True
-    outputCnt.clear()
-  }
-
-  when(computing && io.post.ready) {
-    // Compute each output neuron
-    val dotProduct = (0 until inputSize).map(j =>
-      weightMem.readSync((outputCnt.value * inputSize + j).resized) * inputVec(j)
-    ).reduce(_ + _)
-    val acc = dotProduct.resize(outputWidth)
-    val withBias = if (useBias) acc + biasMem.readSync(outputCnt.value).resize(outputWidth) else acc
-    val quantized = if (quantization) (withBias >> weightWidth).asUInt.resize(outputWidth) else withBias.asUInt.resize(outputWidth)
-    outputReg := quantized.asSInt
-
-    outputCnt.increment()
-    when(outputCnt.willOverflow) {
-      computing := False
-      frameReady := False
+      // Accumulate a complete set of inputs and output the results.
+      val dotSum = accVec
+      val withBias =
+        if (useBias) dotSum + biasMem.readSync(outputCnt.value).resize(outputWidth)
+        else dotSum.resize(outputWidth)
+      val quantized =
+        if (quantization) (withBias >> weightWidth).asUInt.resize(outputWidth)
+        else withBias.asUInt.resize(outputWidth)
+      // Clear the accumulator register to prepare for the next round.
+      accVec := 0
       inputCnt.clear()
+      outputCnt.increment()
+      when(outputCnt.willOverflow) {
+        computing := False
+      } .otherwise {
+        computing := True
+      }
+      io.post.valid := True
+      io.post.payload := quantized.asSInt
     }
   }
 }
 
-class FullConnectionStreamMultiIn(kernelNum: Int, config: FullConnectionConfig) extends Component { 
-  import config._
+
+/* --------------------------------------------------------------------------- */
+/* -------------------------- Full Connection Layer -------------------------- */
+/* --------------------------------------------------------------------------- */
+/**
+ * Full Connection module (streaming weights/bias) with multiple kernel inputs
+ */
+case class FullConnectionLayerConfig(
+  fullconnectionNum: Int,
+  fullconnectionConfig: FullConnectionConfig
+)
+
+class FullConnectionLayerStream(layerCfg: FullConnectionLayerConfig) extends Component {
+  import layerCfg._
+  import fullconnectionConfig._
   val io = new Bundle {
     val EN   = in Bool()
     val wb   = slave(WeightBiasStreamInterface(weightWidth, biasWidth, useBias))
-    val pre  = Vec(slave(Stream(SInt(inputWidth bits))), kernelNum)
+    val pre  = slave(Stream(Vec(SInt(inputWidth bits), fullconnectionNum)))
     val post = master(Stream(SInt(outputWidth bits)))
-  }
-
-  // Storage for weights and bias
-  val weightMem = Mem(SInt(weightWidth bits), inputSize * outputSize)
-  val biasMem   = if (useBias) Mem(SInt(biasWidth bits), outputSize) else null
-  val weightCnt = Counter(inputSize * outputSize)
-  val biasCnt   = if (useBias) Counter(outputSize) else null
-
-  // Streaming reception weighting
-  io.wb.weight.ready := True
-  when(io.wb.weight.valid && io.wb.weight.ready) {
-    weightMem.write(weightCnt.value, io.wb.weight.payload)
-    weightCnt.increment()
-  }
-  if (useBias) {
-    io.wb.bias.ready := True
-    when(io.wb.bias.valid && io.wb.bias.ready) {
-      biasMem.write(biasCnt.value, io.wb.bias.payload)
-      biasCnt.increment()
-    }
-  }
-
-  // Input buffer
-  val inputVec = Vec(Vec(Reg(SInt(inputWidth bits)) init(0), inputSize), kernelNum)
-  val inputCnt = Counter(inputSize)
-  val frameReady = Reg(Bool()) init(False)
-  for (i <- 0 until kernelNum) {
-    io.pre(i).ready := !frameReady
-  }
-  when(io.pre(0).valid && io.pre(0).ready) {
-    for (i <- 0 until kernelNum) {
-      inputVec(i)(inputCnt.value) := io.pre(i).payload
-    }
-    inputCnt.increment()
-    when(inputCnt.willOverflow) {
-      frameReady := True
-    }
-  }
-
-  // Output buffer
-  val outputCnt = Counter(outputSize)
-  val outputReg = Reg(SInt(outputWidth bits)) init(0)
-  val computing = Reg(Bool()) init(False)
-  io.post.valid := computing
-  io.post.payload := outputReg
-  when(frameReady && !computing) {
-    computing := True
-    outputCnt.clear()
-  }
-
-  when(computing && io.post.ready) {
-    // Compute each output neuron
-    val dotProducts = for(k <- 0 until kernelNum) yield {
-      (0 until inputSize).map(j =>
-        weightMem.readSync((outputCnt.value * inputSize + j).resized) * inputVec(k)(j)
-      ).reduce(_ + _)
-    }
-    // val dotProduct = (0 until inputSize).map(j =>
-    //   weightMem.readSync((outputCnt.value * inputSize + j).resized) * inputVec(j)
-    // ).reduce(_ + _)
-    val dotSum = dotProducts.reduce(_ + _)
-    val acc = dotSum.resize(outputWidth)
-    val withBias = if (useBias) acc + biasMem.readSync(outputCnt.value).resize(outputWidth) else acc
-    val quantized = if (quantization) (withBias >> weightWidth).asUInt.resize(outputWidth) else withBias.asUInt.resize(outputWidth)
-    outputReg := quantized.asSInt
-
-    outputCnt.increment()
-    when(outputCnt.willOverflow) {
-      computing := False
-      frameReady := False
-      inputCnt.clear()
-    }
-  }
-}
-
-/**
- * Pipelined Full Connection for better performance
- */
-class PipelinedFullConnection(config: FullConnectionConfig) extends Component {
-  import config._
-  val io = new Bundle {
-    val EN = in Bool()
-    val wb = slave(WeightBiasInterface(weightWidth, biasWidth, inputSize, outputSize, useBias))
-    val pre = slave(Stream(Vec(SInt(inputWidth bits), inputSize)))
-    val post = master(Stream(Vec(SInt(outputWidth bits), outputSize)))
   }
 
   // Ready signal
   io.pre.ready := True
 
-  // Pipeline stages
-  val stage1_valid = Reg(Bool()) init(False)
-  val stage1_input = Reg(Vec(SInt(inputWidth bits), inputSize))
-  val stage2_valid = Reg(Bool()) init(False)
-  val stage2_result = Reg(Vec(SInt(outputWidth bits), outputSize))
-
-  // Stage 1: Register input
-  when(io.pre.valid && io.pre.ready) {
-    stage1_valid := True
-    stage1_input := io.pre.payload
-  } otherwise {
-    stage1_valid := False
-  }
-
-  // Stage 2: Matrix multiplication
-  when(stage1_valid) {
-    stage2_valid := True
-
-    // Compute each output neuron
-    for (i <- 0 until outputSize) {
-      val dotProduct = (0 until inputSize).map(j => {
-        val weight = io.wb.weight(i * inputSize + j)
-        weight * stage1_input(j)
-      }).reduce(_ + _)
-      val acc = dotProduct.resize(outputWidth)
-
-      // Add bias if enabled
-      val withBias = if (useBias) {
-        acc + io.wb.bias(i).resize(outputWidth)
-      } else {
-        acc
-      }
-      // Quantization if enabled
-      val quantized = if (quantization) {
-        (withBias >> weightWidth).asUInt.resize(outputWidth)
-      } else {
-        withBias.asUInt.resize(outputWidth)
-      }
-
-      stage2_result(i) := quantized.asSInt
-    }
-  } otherwise {
-    stage2_valid := False
-  }
-
-  // Stream output logic
-  io.post.valid := Mux(io.EN, stage2_valid, io.pre.valid)
-  io.post.payload := Mux(io.EN, stage2_result, Vec(io.pre.payload.take(outputSize)))
-}
-
-/**
- * Pipelined Full Connection (streaming weights/bias)
- */
-class PipelinedFullConnectionStream(config: FullConnectionConfig) extends Component {
-  import config._
-  val io = new Bundle {
-    val EN   = in Bool()
-    val wb   = slave(WeightBiasStreamInterface(weightWidth, biasWidth, useBias))
-    val pre  = slave(Stream(SInt(inputWidth bits)))
-    val post = master(Stream(SInt(outputWidth bits)))
-  }
-
   // Storage for weights and bias
   val weightMem = Mem(SInt(weightWidth bits), inputSize * outputSize)
-  val biasMem   = if (useBias) Mem(SInt(biasWidth bits), outputSize) else null
   val weightCnt = Counter(inputSize * outputSize)
+  val biasMem   = if (useBias) Mem(SInt(biasWidth bits), outputSize) else null
   val biasCnt   = if (useBias) Counter(outputSize) else null
 
-  // Streaming reception weighting
+  // Receive weights and biases
   io.wb.weight.ready := True
-  when(io.wb.weight.valid && io.wb.weight.ready) {
+  when(io.wb.weight.valid) {
     weightMem.write(weightCnt.value, io.wb.weight.payload)
     weightCnt.increment()
   }
   if (useBias) {
     io.wb.bias.ready := True
-    when(io.wb.bias.valid && io.wb.bias.ready) {
+    when(io.wb.bias.valid) {
       biasMem.write(biasCnt.value, io.wb.bias.payload)
       biasCnt.increment()
     }
   }
 
-  // Input buffer
-  val inputVec = Vec(Reg(SInt(inputWidth bits)) init(0), inputSize)
-  val inputCnt = Counter(inputSize)
-  val frameReady = Reg(Bool()) init(False)
-  io.pre.ready := !frameReady
-  when(io.pre.valid && io.pre.ready) {
-    inputVec(inputCnt.value) := io.pre.payload
+  // Stream computing
+  val computing = RegInit(False)
+  val outputCnt = Counter(outputSize)
+  // Temporary accumulator register for each output neuron
+  val accVec = Vec(Reg(SInt(outputWidth bits)) init(0), fullconnectionNum)
+  // Record how many data groups each stream has received so far.
+  val inputCnt = Counter(inputSize / fullconnectionNum)
+
+  // When EN is active and all inputs are valid, accumulate to the register.
+  io.post.valid := False
+  io.post.payload := 0
+  when(io.EN && io.pre.valid) {
+    for (k <- 0 until fullconnectionNum) {
+      val baseIdx = inputCnt.value * fullconnectionNum
+      accVec(k) := (accVec(k) + (0 until fullconnectionNum).map(j =>
+        weightMem.readSync((outputCnt.value * inputSize + baseIdx + j).resized) * io.pre.payload(j)
+      ).reduce(_ + _)).resized
+    }
     inputCnt.increment()
     when(inputCnt.willOverflow) {
-      frameReady := True
-    }
-  }
-
-  // Stage1 -> Ready to enter
-  val stage1_valid = Reg(Bool()) init(False)
-  val stage1_idx   = Reg(UInt(log2Up(outputSize) bits)) init(0)
-  when(frameReady && !stage1_valid) {
-    stage1_valid := True
-    stage1_idx := 0
-  }
-
-  // Stage2 -> Compute each output neuron
-  val stage2_valid = Reg(Bool()) init(False)
-  val stage2_val   = Reg(SInt(outputWidth bits)) init(0)
-  val stage2_idx   = Reg(UInt(log2Up(outputSize) bits)) init(0)
-
-  when(stage1_valid) {
-    val dotProduct = (0 until inputSize).map(j =>
-      weightMem.readSync(stage1_idx * inputSize + j) * inputVec(j)
-    ).reduce(_ + _)
-    val acc = dotProduct.resize(outputWidth)
-    val withBias = if (useBias) acc + biasMem.readSync(stage1_idx).resize(outputWidth) else acc
-    val quantized = if (quantization) (withBias >> weightWidth).asUInt.resize(outputWidth) else withBias.asUInt.resize(outputWidth)
-    stage2_val := quantized.asSInt
-    stage2_idx := stage1_idx
-    stage2_valid := True
-
-    when(stage1_idx === outputSize - 1) {
-      stage1_valid := False
-      frameReady := False
+      // Accumulate a complete set of inputs and output the results.
+      val dotSum = accVec.reduce(_ + _)
+      val withBias =
+        if (useBias) dotSum + biasMem.readSync(outputCnt.value).resize(outputWidth)
+        else dotSum.resize(outputWidth)
+      val quantized =
+        if (quantization) (withBias >> weightWidth).asUInt.resize(outputWidth)
+        else withBias.asUInt.resize(outputWidth)
+      // Clear the accumulator register to prepare for the next round.
+      for (k <- 0 until fullconnectionNum) accVec(k) := 0
       inputCnt.clear()
-    } otherwise {
-      stage1_idx := stage1_idx + 1
+      outputCnt.increment()
+      when(outputCnt.willOverflow) {
+        computing := False
+      } .otherwise {
+        computing := True
+      }
+      io.post.valid := True
+      io.post.payload := quantized.asSInt
     }
-  }
-
-  // Stream output logic
-  io.post.valid := stage2_valid
-  io.post.payload := stage2_val
-  when(io.post.fire) {
-    stage2_valid := False
   }
 }
 
@@ -449,39 +302,12 @@ class PipelinedFullConnectionStream(config: FullConnectionConfig) extends Compon
 //     //     inputSize = 192,  // 4x4x12 flattened
 //     //     outputSize = 10,  // 10 classes
 //     //     useBias = true,
-//     //     signed = false,
 //     //     quantization = false))
-//     // ).printPruned()
-//     // // Pipelined full connection
-//     // SpinalConfig(targetDirectory = "rtl").generateVerilog(
-//     //   new PipelinedFullConnection(FullConnectionConfig(
-//     //     inputWidth = 8,
-//     //     outputWidth = 16,
-//     //     weightWidth = 8,
-//     //     biasWidth = 8,
-//     //     inputSize = 192,  // 4x4x12 flattened
-//     //     outputSize = 128,
-//     //     useBias = true,
-//     //     signed = false,
-//     //     quantization = true))
 //     // ).printPruned()
 
-//     // // Basic full connection layer streaming weights/bias
-//     // SpinalConfig(targetDirectory = "rtl").generateVerilog(
-//     //   new FullConnectionStream(FullConnectionConfig(
-//     //     inputWidth = 8,
-//     //     outputWidth = 16,
-//     //     weightWidth = 8,
-//     //     biasWidth = 8,
-//     //     inputSize = 192,  // 4x4x12 flattened
-//     //     outputSize = 10,  // 10 classes
-//     //     useBias = true,
-//     //     signed = false,
-//     //     quantization = false))
-//     // ).printPruned()
 //     // Basic full connection layer streaming weights/bias with multi-input
 //     SpinalConfig(targetDirectory = "rtl").generateVerilog(
-//       new FullConnectionStreamMultiIn(6, FullConnectionConfig(
+//       new FullConnectionStream(FullConnectionConfig(
 //         inputWidth = 8,
 //         outputWidth = 16,
 //         weightWidth = 8,
@@ -489,21 +315,26 @@ class PipelinedFullConnectionStream(config: FullConnectionConfig) extends Compon
 //         inputSize = 192,  // 4x4x12 flattened
 //         outputSize = 10,  // 10 classes
 //         useBias = true,
-//         signed = false,
 //         quantization = false))
 //     ).printPruned()
-//     // // Pipelined full connection streaming weights/bias
-//     // SpinalConfig(targetDirectory = "rtl").generateVerilog(
-//     //   new PipelinedFullConnectionStream(FullConnectionConfig(
-//     //     inputWidth = 8,
-//     //     outputWidth = 16,
-//     //     weightWidth = 8,
-//     //     biasWidth = 8,
-//     //     inputSize = 192,  // 4x4x12 flattened
-//     //     outputSize = 128,
-//     //     useBias = true,
-//     //     signed = false,
-//     //     quantization = true))
-//     // ).printPruned()
+//   }
+// }
+
+// object FullConnectionLayerGen {
+//   def main(args: Array[String]): Unit = {
+//     // Basic full connection layer streaming weights/bias with multi-input
+//     SpinalConfig(targetDirectory = "rtl").generateVerilog(
+//       new FullConnectionLayerStream(FullConnectionLayerConfig(
+//         fullconnectionNum = 6,
+//         fullconnectionConfig = FullConnectionConfig(
+//           inputWidth = 8,
+//           outputWidth = 16,
+//           weightWidth = 8,
+//           biasWidth = 8,
+//           inputSize = 192,  // 4x4x12 flattened
+//           outputSize = 10,  // 10 classes
+//           useBias = true,
+//           quantization = false)))
+//     ).printPruned()
 //   }
 // }

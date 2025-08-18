@@ -147,80 +147,43 @@ class Conv2DStream(config: Conv2DConfig) extends Component {
 /* ---------------------------- Convolution Layer ---------------------------- */
 /* --------------------------------------------------------------------------- */
 case class Conv2DLayerConfig(
-  kernelNum: Int,
+  convNum: Int,
   convConfig: Conv2DConfig
 )
 
 class Conv2DLayerStream(layerCfg: Conv2DLayerConfig) extends Component {
   import layerCfg._
   val io = new Bundle {
-    val EN = in Bool()
-    val pre = slave(Stream(SInt(convConfig.dataWidth bits)))
-    val post = Vec(master(Stream(SInt(convConfig.convWidth bits))), kernelNum)
-    val linewidth = if (convConfig.lineLengthDyn) in UInt(log2Up((convConfig.lineLength - 1)) bits) else null
-    val kernel = if (convConfig.kernelDyn) Vec(slave(Stream(SInt(convConfig.dataWidth bits))), kernelNum) else null
-  }
-
-  // Multiple Conv2DStream
-  val convs = Array.fill(kernelNum)(new Conv2DStream(convConfig))
-
-  // All convolutional kernels share the input pre
-  for (conv <- convs) {
-    conv.io.EN := io.EN
-    conv.io.pre.payload := io.pre.payload
-    conv.io.pre.valid := io.pre.valid
-    if (convConfig.lineLengthDyn) {
-      conv.io.linewidth := io.linewidth
-    }
-  }
-
-  // Multiple streams connection
-  io.pre.ready := convs.map(_.io.pre.ready).reduce(_ && _)
-  for (i <- 0 until kernelNum) {
-    io.post(i) <> convs(i).io.post
-    if (convConfig.kernelDyn) {
-      convs(i).io.kernel <> io.kernel(i)
-    }
-  }
-}
-
-class Conv2DLayerStreamZip(layerCfg: Conv2DLayerConfig) extends Component {
-  import layerCfg._
-  val io = new Bundle {
     val EN   = in Bool()
     val pre  = slave(Stream(SInt(convConfig.dataWidth bits)))
-    val post = Vec(master(Stream(SInt(convConfig.convWidth bits))), kernelNum)
+    val post = master(Stream(Vec(SInt(convConfig.convWidth bits), convNum)))
     val linewidth = if (convConfig.lineLengthDyn) in UInt(log2Up((convConfig.lineLength - 1)) bits) else null
     val kernel = if (convConfig.kernelDyn) slave(Stream(SInt(convConfig.dataWidth bits))) else null
   }
 
   // Multiple Conv2DStream
-  val convs = Array.fill(kernelNum)(new Conv2DStream(convConfig))
-
-  // Dynamic lineWidth
-  for (i <- 0 until kernelNum) {
+  val convs = Array.fill(convNum)(new Conv2DStream(convConfig))
+  for (i <- 0 until convNum) {
     convs(i).io.EN := io.EN
     convs(i).io.pre.payload := io.pre.payload
     convs(i).io.pre.valid := io.pre.valid
-    convs(i).io.post <> io.post(i)
+    convs(i).io.post.ready := io.post.ready
     if (convConfig.lineLengthDyn) {
       convs(i).io.linewidth := io.linewidth
     }
   }
 
-  // kernel distributor
+  // Kernel distributor
   if (convConfig.kernelDyn) {
     val totalKernelSize = convConfig.kernelSize * convConfig.kernelSize
     val idx = Reg(UInt(log2Up(totalKernelSize) bits)) init(0)
-    val kId = Reg(UInt(log2Up(kernelNum) bits)) init(0)
-
+    val kId = Reg(UInt(log2Up(convNum) bits)) init(0)
     // One-hot select the currently active convolution kernel
-    for (i <- 0 until kernelNum) {
+    for (i <- 0 until convNum) {
       convs(i).io.kernel.valid   := io.kernel.valid && (kId === i)
       convs(i).io.kernel.payload := io.kernel.payload
     }
     io.kernel.ready := convs.map(c => c.io.kernel.ready && (kId === convs.indexOf(c))).reduce(_ || _)
-
     // Control distribution order
     when(io.kernel.fire) {
       idx := idx + 1
@@ -230,29 +193,32 @@ class Conv2DLayerStreamZip(layerCfg: Conv2DLayerConfig) extends Component {
       }
     }
   }
-
   // Output
-  io.pre.ready    := convs.map(_.io.pre.ready).reduce(_ && _)
+  io.pre.ready := convs.map(_.io.pre.ready).reduce(_ && _)
+  io.post.valid := convs.map(_.io.post.valid).reduce(_ && _)
+  for (i <- 0 until convNum) {
+    io.post.payload(i) := convs(i).io.post.payload
+  }
 }
 
-class Conv2DLayerStreamZipMultiIn(layerCfg: Conv2DLayerConfig) extends Component {
+class Conv2DLayerStreamMultiIn(layerCfg: Conv2DLayerConfig) extends Component {
   import layerCfg._
   val io = new Bundle {
     val EN   = in Bool()
-    val pre  = Vec(slave(Stream(SInt(convConfig.dataWidth bits))), kernelNum)
-    val post = Vec(master(Stream(SInt(convConfig.convWidth bits))), kernelNum)
+    val pre  = slave(Stream(Vec(SInt(convConfig.dataWidth bits), convNum)))
+    val post = master(Stream(Vec(SInt(convConfig.convWidth bits), convNum)))
     val linewidth = if (convConfig.lineLengthDyn) in UInt(log2Up((convConfig.lineLength - 1)) bits) else null
     val kernel = if (convConfig.kernelDyn) slave(Stream(SInt(convConfig.dataWidth bits))) else null
   }
 
   // Multiple Conv2DStream
-  val convs = Array.fill(kernelNum)(new Conv2DStream(convConfig))
-
+  val convs = Array.fill(convNum)(new Conv2DStream(convConfig))
   // Dynamic lineWidth
-  for (i <- 0 until kernelNum) {
+  for (i <- 0 until convNum) {
     convs(i).io.EN := io.EN
-    convs(i).io.pre <> io.pre(i)
-    convs(i).io.post <> io.post(i)
+    convs(i).io.pre.payload := io.pre.payload(i)
+    convs(i).io.pre.valid := io.pre.valid
+    convs(i).io.post.ready := io.post.ready
     if (convConfig.lineLengthDyn) {
       convs(i).io.linewidth := io.linewidth
     }
@@ -262,21 +228,65 @@ class Conv2DLayerStreamZipMultiIn(layerCfg: Conv2DLayerConfig) extends Component
   if (convConfig.kernelDyn) {
     val totalKernelSize = convConfig.kernelSize * convConfig.kernelSize
     val idx = Reg(UInt(log2Up(totalKernelSize) bits)) init(0)
-    val kId = Reg(UInt(log2Up(kernelNum) bits)) init(0)
-
+    val kId = Reg(UInt(log2Up(convNum) bits)) init(0)
     // One-hot select the currently active convolution kernel
-    for (i <- 0 until kernelNum) {
+    for (i <- 0 until convNum) {
       convs(i).io.kernel.valid   := io.kernel.valid && (kId === i)
       convs(i).io.kernel.payload := io.kernel.payload
     }
     io.kernel.ready := convs.map(c => c.io.kernel.ready && (kId === convs.indexOf(c))).reduce(_ || _)
-
     // Control distribution order
     when(io.kernel.fire) {
       idx := idx + 1
       when(idx === (totalKernelSize - 1)) {
         idx := 0
         kId := kId + 1
+      }
+    }
+  }
+  // Output
+  io.pre.ready := convs.map(_.io.pre.ready).reduce(_ && _)
+  io.post.valid := convs.map(_.io.post.valid).reduce(_ && _)
+  for (i <- 0 until convNum) {
+    io.post.payload(i) := convs(i).io.post.payload
+  }
+}
+
+
+/* --------------------------------------------------------------------------- */
+/* -------------------------- Convolution Layer Map -------------------------- */
+/* --------------------------------------------------------------------------- */
+case class Conv2DLayerStreamMapConfig(
+  dataWidth: Int,
+  layerKernelSize: Seq[Int] // 每层需要的kernel元素数量
+)
+
+class Conv2DLayerStreamMap(mapCfg: Conv2DLayerStreamMapConfig) extends Component {
+  import mapCfg._
+  val io = new Bundle {
+    val kernelIn = slave(Stream(SInt(dataWidth bits)))
+    val kernelOut = Vec(master(Stream(SInt(dataWidth bits))), layerKernelSize.length)
+  }
+
+  val layerKernelSizesHW = Vec(layerKernelSize.map(x => U(x, 32 bits)))
+  val layerIdx = Reg(UInt(log2Up(layerKernelSize.length) bits)) init(0)
+  val cnt = Reg(UInt(32 bits)) init(0)
+
+  // Data routing
+  io.kernelIn.ready := io.kernelOut(layerIdx).ready // Enter ready to default to the current layer's ready
+  for (i <- 0 until layerKernelSize.length) { // Default each output invalid
+    io.kernelOut(i).valid := False
+    io.kernelOut(i).payload := io.kernelIn.payload
+  }
+  when(io.kernelIn.valid && io.kernelIn.ready) {
+    io.kernelOut(layerIdx).valid := True
+    cnt := cnt + 1
+    when(cnt === (layerKernelSizesHW(layerIdx) - 1)) {
+      cnt := 0
+      when(layerIdx === (layerKernelSizesHW.length - 1)) {
+        layerIdx := 0
+      } otherwise {
+        layerIdx := layerIdx + 1
       }
     }
   }
@@ -321,10 +331,10 @@ class Conv2DLayerStreamZipMultiIn(layerCfg: Conv2DLayerConfig) extends Component
 //   }
 // }
 
-// object Conv2DLayerGen {
+// object Conv2DLayerStreamGen {
 //   def main(args: Array[String]): Unit = {
 //     val config = Conv2DLayerConfig(
-//       kernelNum = 6,
+//       convNum = 6,
 //       convConfig = Conv2DConfig(
 //         dataWidth = 8,
 //         convWidth = 10,
@@ -339,10 +349,22 @@ class Conv2DLayerStreamZipMultiIn(layerCfg: Conv2DLayerConfig) extends Component
 //     //   new Conv2DLayerStream(config)
 //     // ).printPruned()
 //     SpinalConfig(targetDirectory = "rtl").generateVerilog(
-//       new Conv2DLayerStreamZip(config)
+//       new Conv2DLayerStreamMultiIn(config)
 //     ).printPruned()
-//     // SpinalConfig(targetDirectory = "rtl").generateVerilog(
-//     //   new Conv2DLayerStreamZipMultiIn(config)
-//     // ).printPruned()
+//   }
+// }
+
+// object Conv2DLayerStreamMapGen {
+//   def main(args: Array[String]): Unit = {
+//     val kernelMapCfg = Conv2DLayerStreamMapConfig(
+//       dataWidth = 8,
+//       layerKernelSize = Seq(
+//         6 * 5 * 5,
+//         12 * 5 * 5
+//       )
+//     )
+//     SpinalConfig(targetDirectory = "rtl").generateVerilog(
+//       new Conv2DLayerStreamMap(kernelMapCfg)
+//     )
 //   }
 // }

@@ -22,7 +22,6 @@ case class LeNet5Config(
   inputSize    : Int = 28,         // input image size
   numClasses   : Int = 10,         // number of output classes
   useBias      : Boolean = true,   // whether to use bias
-  signed       : Boolean = false,  // whether data is signed
   quantization : Boolean = false   // whether to use quantization
 )
 
@@ -122,17 +121,16 @@ class SimpleLeNet5(config: LeNet5Config) extends Component {
   pool2.io.pre <> relu2.io.post
 
   // ============================================================================
-  // Fully Connected Layer: 16 -> 10
+  // Fully Connected Layer: 4×4 -> 10
   // ============================================================================
   val fc_config = FullConnectionConfig(
     inputWidth = dataWidth,
     outputWidth = dataWidth,
     weightWidth = weightWidth,
     biasWidth = biasWidth,
-    inputSize = 16,
+    inputSize = 4*4,
     outputSize = numClasses,
     useBias = useBias,
-    signed = signed,
     quantization = quantization
   )
   val fc = new FullConnectionStream(fc_config)
@@ -156,17 +154,29 @@ class LeNet5(config: LeNet5Config) extends Component {
     val EN = in Bool()
     val input = slave(Stream(SInt(dataWidth bits)))
     val output = master(Stream(SInt(dataWidth bits)))
-    val kernel1 = slave(Stream(SInt(dataWidth bits)))
-    val kernel2 = slave(Stream(SInt(dataWidth bits)))
+    val kernel = slave(Stream(SInt(dataWidth bits)))
     val weight = slave(Stream(SInt(weightWidth bits)))
     val bias = slave(Stream(SInt(biasWidth bits)))
   }
 
   // ============================================================================
+  // Convolution Layer Steam Map
+  // ============================================================================
+  val kernelMapCfg = Conv2DLayerStreamMapConfig(
+    dataWidth = 8,
+    layerKernelSize = Seq(
+      6 * 5 * 5,
+      12 * 5 * 5
+    )
+  )
+  val kernelMap = new Conv2DLayerStreamMap(kernelMapCfg)
+  kernelMap.io.kernelIn <> io.kernel
+
+  // ============================================================================
   // Convolution Layer 1: 6 kernels of 5×5 -> Output: 6×24×24
   // ============================================================================
   val convLayer1_config = Conv2DLayerConfig(
-    kernelNum = 6,
+    convNum = 6,
     convConfig = Conv2DConfig(
       dataWidth = 8,
       convWidth = 8,
@@ -177,50 +187,44 @@ class LeNet5(config: LeNet5Config) extends Component {
       kernelDyn = true,
       padding = 1,
       stride = 1))
-  val convLayer1 = new Conv2DLayerStreamZip(convLayer1_config)
+  val convLayer1 = new Conv2DLayerStream(convLayer1_config)
   convLayer1.io.EN := io.EN
   convLayer1.io.pre <> io.input
-  convLayer1.io.kernel <> io.kernel1
+  convLayer1.io.kernel <> kernelMap.io.kernelOut(0)
 
   // ============================================================================
   // ReLU Activation after Conv1
   // ============================================================================
-  val relu1_outputs = Vec(Stream(SInt(dataWidth bits)), 6)
-  val relu1_config = ReLUConfig(
-    dataWidth = dataWidth,
-    activationType = "relu"
-  )
-  for (i <- 0 until 6) {
-    val relu1 = new ReLU(relu1_config)
-    relu1.io.EN := io.EN
-    relu1.io.pre <> convLayer1.io.post(i)
-    relu1_outputs(i) <> relu1.io.post
-  }
+  val reluLayer1_config = ReLULayerConfig(
+    reluNum = 6,
+    reluConfig = ReLUConfig(
+      dataWidth = 8,
+      activationType = "relu"))
+  val reluLayer1 = new ReLULayer(reluLayer1_config)
+  reluLayer1.io.EN := io.EN
+  reluLayer1.io.pre <> convLayer1.io.post
 
   // ============================================================================
   // Max Pooling Layer 1: 2×2 max pooling -> Output: 6×12×12
   // ============================================================================
-  val pool1_outputs = Vec(Stream(SInt(dataWidth bits)), 6)
-  val pool1_config = MaxPoolConfig(
-    dataWidth = dataWidth,
-    lineLength = 24,
-    kernelSize = 2,
-    padding = 0,
-    stride = 2,
-    lineLengthDyn = false
-  )
-  for (i <- 0 until 6) {
-    val pool1 = new MaxPool(pool1_config)
-    pool1.io.EN := io.EN
-    pool1.io.pre <> relu1_outputs(i)
-    pool1_outputs(i) <> pool1.io.post
-  }
+  val poolLayer1_config = MaxPoolLayerConfig(
+    maxpoolNum = 6,
+    maxpoolConfig = MaxPoolConfig(
+      dataWidth = dataWidth,
+      lineLength = 24,
+      kernelSize = 2,
+      padding = 0,
+      stride = 2,
+      lineLengthDyn = false))
+  val poolLayer1 = new MaxPoolLayer(poolLayer1_config)
+  poolLayer1.io.EN := io.EN
+  poolLayer1.io.pre <> reluLayer1.io.post
 
   // ============================================================================
   // Convolution Layer 2: 12 kernels of 5×5 -> Output: 12×8×8
   // ============================================================================
   val convLayer2_config = Conv2DLayerConfig(
-    kernelNum = 12,
+    convNum = 12,
     convConfig = Conv2DConfig(
       dataWidth = 8,
       convWidth = 8,
@@ -231,72 +235,62 @@ class LeNet5(config: LeNet5Config) extends Component {
       kernelDyn = true,
       padding = 1,
       stride = 1))
-  val convLayer2 = new Conv2DLayerStreamZipMultiIn(convLayer2_config)
+  val convLayer2 = new Conv2DLayerStreamMultiIn(convLayer2_config)
   convLayer2.io.EN := io.EN
-  convLayer2.io.kernel <> io.kernel2
-  for (i <- 0 until 6) {
-    convLayer2.io.pre(i) <> pool1_outputs(i)
-  }
-  for (i <- 0 until 6) {
-    convLayer2.io.pre(i+6).payload := pool1_outputs(i).payload
-    convLayer2.io.pre(i+6).valid := pool1_outputs(i).valid
+  convLayer2.io.kernel <> kernelMap.io.kernelOut(1)
+  convLayer2.io.pre.ready <> poolLayer1.io.post.ready
+  convLayer2.io.pre.valid <> poolLayer1.io.post.valid
+  for (i <- 0 until 12) {
+    convLayer2.io.pre.payload(i) := poolLayer1.io.post.payload(i / 2)
   }
 
   // ============================================================================
   // ReLU Activation after Conv2
   // ============================================================================
-  val relu2_outputs = Vec(Stream(SInt(dataWidth bits)), 12)
-  val relu2_config = ReLUConfig(
-    dataWidth = dataWidth,
-    activationType = "relu"
-  )
-  for (i <- 0 until 12) {
-    val relu2 = new ReLU(relu2_config)
-    relu2.io.EN := io.EN
-    relu2.io.pre <> convLayer2.io.post(i)
-    relu2_outputs(i) <> relu2.io.post
-  }
+  val reluLayer2_config = ReLULayerConfig(
+    reluNum = 12,
+    reluConfig = ReLUConfig(
+      dataWidth = 8,
+      activationType = "relu"))
+  val reluLayer2 = new ReLULayer(reluLayer2_config)
+  reluLayer2.io.EN := io.EN
+  reluLayer2.io.pre <> convLayer2.io.post
 
   // ============================================================================
   // Max Pooling Layer 2: 2×2 max pooling -> Output: 12×4×4
   // ============================================================================
-  val pool2_outputs = Vec(Stream(SInt(dataWidth bits)), 12)
-  val pool2_config = MaxPoolConfig(
-    dataWidth = dataWidth,
-    lineLength = 8,
-    kernelSize = 2,
-    padding = 0,
-    stride = 2,
-    lineLengthDyn = false
-  )
-  for (i <- 0 until 12) {
-    val pool2 = new MaxPool(pool2_config)
-    pool2.io.EN := io.EN
-    pool2.io.pre <> relu2_outputs(i)
-    pool2_outputs(i) <> pool2.io.post
-  }
+  val poolLayer2_config = MaxPoolLayerConfig(
+    maxpoolNum = 12,
+    maxpoolConfig = MaxPoolConfig(
+      dataWidth = dataWidth,
+      lineLength = 8,
+      kernelSize = 2,
+      padding = 0,
+      stride = 2,
+      lineLengthDyn = false))
+  val poolLayer2 = new MaxPoolLayer(poolLayer2_config)
+  poolLayer2.io.EN := io.EN
+  poolLayer2.io.pre <> reluLayer2.io.post
 
   // ============================================================================
   // Fully Connected Layer: 12×4×4 -> 10
   // ============================================================================
-  val fc_config = FullConnectionConfig(
-    inputWidth = dataWidth,
-    outputWidth = dataWidth,
-    weightWidth = weightWidth,
-    biasWidth = biasWidth,
-    inputSize = 4*4*12,
-    outputSize = numClasses,
-    useBias = useBias,
-    signed = signed,
-    quantization = quantization
-  )
-  val fc = new FullConnectionStreamMultiIn(12, fc_config)
+  val fc_config = FullConnectionLayerConfig(
+    fullconnectionNum = 12,
+    fullconnectionConfig = FullConnectionConfig(
+      inputWidth = dataWidth,
+      outputWidth = dataWidth,
+      weightWidth = weightWidth,
+      biasWidth = biasWidth,
+      inputSize = 4*4*12,
+      outputSize = numClasses,
+      useBias = useBias,
+      quantization = quantization))
+  val fc = new FullConnectionLayerStream(fc_config)
   fc.io.EN := io.EN
   fc.io.wb.weight <> io.weight
   fc.io.wb.bias <> io.bias
-  for (i <- 0 until 12) {
-    fc.io.pre(i) <> pool2_outputs(i)
-  }
+  fc.io.pre <> poolLayer2.io.post
 
   // ============================================================================
   // Output
@@ -308,6 +302,24 @@ class LeNet5(config: LeNet5Config) extends Component {
 /* ----------------------------------------------------------------------------- */
 /* ---------------------------------- Demo Gen --------------------------------- */
 /* ----------------------------------------------------------------------------- */
+object SimpleLeNet5Gen {
+  def main(args: Array[String]): Unit = {
+    val config = LeNet5Config(
+      dataWidth = 8,
+      weightWidth = 8,
+      biasWidth = 8,
+      inputSize = 28,
+      numClasses = 10,
+      useBias = true,
+      quantization = false
+    )
+    // Generate simplified LeNet-5
+    SpinalConfig(targetDirectory = "rtl").generateVerilog(
+      new SimpleLeNet5(config)
+    )
+  }
+}
+
 object LeNet5Gen {
   def main(args: Array[String]): Unit = {
     val config = LeNet5Config(
@@ -317,27 +329,11 @@ object LeNet5Gen {
       inputSize = 28,
       numClasses = 10,
       useBias = true,
-      signed = false,
       quantization = false
     )
-    // // Generate simplified LeNet-5
-    // SpinalConfig(targetDirectory = "rtl").generateVerilog(
-    //   new SimpleLeNet5(config)
-    // )
-    // Generate complete LeNet-5
+    // Generate Complete LeNet-5
     SpinalConfig(targetDirectory = "rtl").generateVerilog(
       new LeNet5(config)
     )
-    // println("LeNet-5 network generated successfully!")
-    // println("=== LeNet-5 Architecture ===")
-    // println("Input: 28x28 grayscale image")
-    // println("Conv1: 5x5 convolution -> 24x24")
-    // println("ReLU1: Activation")
-    // println("Pool1: 2x2 max pooling -> 12x12")
-    // println("Conv2: 5x5 convolution -> 8x8")
-    // println("ReLU2: Activation")
-    // println("Pool2: 2x2 max pooling -> 4x4")
-    // println("Flatten: 4x4 -> 16")
-    // println("FC: 16 -> 10 (output classes)")
   }
 }

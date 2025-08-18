@@ -56,6 +56,44 @@ class MaxPool(config: MaxPoolConfig) extends Component {
 }
 
 
+/* --------------------------------------------------------------------------- */
+/* ------------------------------ MaxPool Layer ------------------------------ */
+/* --------------------------------------------------------------------------- */
+case class MaxPoolLayerConfig(
+  maxpoolNum: Int,
+  maxpoolConfig: MaxPoolConfig
+)
+
+class MaxPoolLayer(layerCfg: MaxPoolLayerConfig) extends Component {
+  import layerCfg._
+  val io = new Bundle {
+    val EN   = in Bool()
+    val pre  = slave(Stream(Vec(SInt(maxpoolConfig.dataWidth bits), maxpoolNum)))
+    val post = master(Stream(Vec(SInt(maxpoolConfig.dataWidth bits), maxpoolNum)))
+    val linewidth = if (maxpoolConfig.lineLengthDyn) in UInt(log2Up((maxpoolConfig.lineLength - 1)) bits) else null
+  }
+
+  // Multiple MaxPool
+  val maxpools = Array.fill(maxpoolNum)(new MaxPool(maxpoolConfig))
+  for (i <- 0 until maxpoolNum) {
+    maxpools(i).io.EN := io.EN
+    maxpools(i).io.pre.payload := io.pre.payload(i)
+    maxpools(i).io.pre.valid := io.pre.valid
+    maxpools(i).io.post.ready := io.post.ready
+    if (maxpoolConfig.lineLengthDyn) {
+      maxpools(i).io.linewidth := io.linewidth
+    }
+  }
+
+  // Output
+  io.pre.ready := maxpools.map(_.io.pre.ready).reduce(_ && _)
+  io.post.valid := maxpools.map(_.io.post.valid).reduce(_ && _)
+  for (i <- 0 until maxpoolNum) {
+    io.post.payload(i) := maxpools(i).io.post.payload
+  }
+}
+
+
 /* ----------------------------------------------------------------------------- */
 /* ---------------------------------- Demo Gen --------------------------------- */
 /* ----------------------------------------------------------------------------- */
@@ -69,6 +107,23 @@ class MaxPool(config: MaxPoolConfig) extends Component {
 //         padding = 0,
 //         stride = 2,
 //         lineLengthDyn = true))
+//     ).printPruned()
+//   }
+// }
+
+// object MaxPoolLayerGen {
+//   def main(args: Array[String]): Unit = {
+//     SpinalConfig(targetDirectory = "rtl").generateVerilog(
+//       new MaxPoolLayer(MaxPoolLayerConfig(
+//         maxpoolNum = 2,
+//         maxpoolConfig = MaxPoolConfig(
+//           dataWidth = 8,
+//           lineLength = 24,
+//           kernelSize = 2,
+//           padding = 0,
+//           stride = 2,
+//           lineLengthDyn = true))
+//       )
 //     ).printPruned()
 //   }
 // }

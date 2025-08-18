@@ -110,6 +110,41 @@ class BatchReLU(config: ReLUConfig, numChannels: Int) extends Component {
 }
 
 
+/* -------------------------------------------------------------------------- */
+/* ------------------------------- ReLU Layer ------------------------------- */
+/* -------------------------------------------------------------------------- */
+case class ReLULayerConfig(
+  reluNum: Int,
+  reluConfig: ReLUConfig
+)
+
+class ReLULayer(layerCfg: ReLULayerConfig) extends Component {
+  import layerCfg._
+  val io = new Bundle {
+    val EN   = in Bool()
+    val pre  = slave(Stream(Vec(SInt(reluConfig.dataWidth bits), reluNum)))
+    val post = master(Stream(Vec(SInt(reluConfig.dataWidth bits), reluNum)))
+  }
+
+  // Multiple ReLU
+  val relus = Array.fill(reluNum)(new ReLU(reluConfig))
+  // Dynamic lineWidth
+  for (i <- 0 until reluNum) {
+    relus(i).io.EN := io.EN
+    relus(i).io.pre.payload := io.pre.payload(i)
+    relus(i).io.pre.valid := io.pre.valid
+    relus(i).io.post.ready := io.post.ready
+  }
+
+  // Output
+  io.pre.ready := relus.map(_.io.pre.ready).reduce(_ && _)
+  io.post.valid := relus.map(_.io.post.valid).reduce(_ && _)
+  for (i <- 0 until reluNum) {
+    io.post.payload(i) := relus(i).io.post.payload
+  }
+}
+
+
 /* ----------------------------------------------------------------------------- */
 /* ---------------------------------- Demo Gen --------------------------------- */
 /* ----------------------------------------------------------------------------- */
@@ -148,5 +183,18 @@ class BatchReLU(config: ReLUConfig, numChannels: Int) extends Component {
 //     //     dataWidth = 8,
 //     //     activationType = "relu"), 3)
 //     // ).printPruned()
+//   }
+// }
+
+// object ReLULayerGen {
+//   def main(args: Array[String]): Unit = {
+//     SpinalConfig(targetDirectory = "rtl").generateVerilog(
+//       new ReLULayer(ReLULayerConfig(
+//         reluNum = 3,
+//         reluConfig = ReLUConfig(
+//           dataWidth = 8,
+//           activationType = "relu"))
+//       )
+//     ).printPruned()
 //   }
 // }
