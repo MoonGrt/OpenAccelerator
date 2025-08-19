@@ -30,21 +30,6 @@ case class FullConnectionConfig(
 case class WeightBiasInterface(
   weightWidth: Int,
   biasWidth: Int,
-  inputSize: Int,
-  outputSize: Int,
-  useBias: Boolean = true
-) extends Bundle with IMasterSlave {
-  val weight = Vec(SInt(weightWidth bits), inputSize * outputSize)
-  val bias = Vec(SInt(biasWidth bits), outputSize)
-
-  override def asMaster() = this.asOutput()
-  override def asSlave() = this.asInput()
-  override def clone = WeightBiasInterface(weightWidth, biasWidth, inputSize, outputSize, useBias)
-}
-
-case class WeightBiasStreamInterface(
-  weightWidth: Int,
-  biasWidth: Int,
   useBias: Boolean = true
 ) extends Bundle with IMasterSlave {
   val weight = Stream(SInt(weightWidth bits))
@@ -66,73 +51,17 @@ case class WeightBiasStreamInterface(
       out(bias.ready)
     }
   }
-  override def clone = WeightBiasStreamInterface(weightWidth, biasWidth, useBias)
-}
-
-/**
- * Full Connection module
- */
-class FullConnection(config: FullConnectionConfig) extends Component {
-  import config._
-  val io = new Bundle {
-    val EN = in Bool()
-    val pre = slave(Stream(Vec(SInt(inputWidth bits), inputSize)))
-    val post = master(Stream(Vec(SInt(outputWidth bits), outputSize)))
-    val wb = slave(WeightBiasInterface(weightWidth, biasWidth, inputSize, outputSize, useBias))
-  }
-
-  // Ready signal
-  io.pre.ready := True
-
-  // Matrix multiplication: Y = W * X + b
-  def matrixMultiply(input: Vec[SInt], weight: Vec[SInt]): Vec[SInt] = {
-    val result = Vec(SInt(outputWidth bits), outputSize)
-
-    for (i <- 0 until outputSize) {
-      val sum = Reg(SInt(outputWidth bits)) init(0)
-      val acc = SInt(outputWidth bits)
-
-      // Compute dot product for output neuron i
-      val dotProduct = (0 until inputSize).map(j => {
-        val w = weight(i * inputSize + j)
-        w * input(j)
-      }).reduce(_ + _)
-      acc := dotProduct.resize(outputWidth)
-
-      // Add bias if enabled
-      val withBias = if (useBias) {
-        acc + io.wb.bias(i).resize(outputWidth)
-      } else {
-        acc
-      }
-      // Quantization if enabled
-      val quantized = if (quantization) {
-        // Simple quantization: right shift by weightWidth
-        (withBias >> weightWidth).asUInt.resize(outputWidth)
-      } else {
-        withBias.asUInt.resize(outputWidth)
-      }
-
-      result(i) := quantized.asSInt
-    }
-    result
-  }
-
-  val outputValues = matrixMultiply(io.pre.payload, io.wb.weight)
-
-  // Stream output logic
-  io.post.valid := Mux(io.EN, io.pre.valid, io.pre.valid)
-  io.post.payload := Mux(io.EN, outputValues, Vec(io.pre.payload.take(outputSize)))
+  override def clone = WeightBiasInterface(weightWidth, biasWidth, useBias)
 }
 
 /**
  * Full Connection module (streaming weights/bias) with multiple kernel inputs
  */
-class FullConnectionStream(config: FullConnectionConfig) extends Component {
+class FullConnection(config: FullConnectionConfig) extends Component {
   import config._
   val io = new Bundle {
     val EN   = in Bool()
-    val wb   = slave(WeightBiasStreamInterface(weightWidth, biasWidth, useBias))
+    val wb   = slave(WeightBiasInterface(weightWidth, biasWidth, useBias))
     val pre  = slave(Stream(SInt(inputWidth bits)))
     val post = master(Stream(SInt(outputWidth bits)))
   }
@@ -215,7 +144,7 @@ class FullConnectionLayer(layerCfg: FullConnectionLayerConfig) extends Component
   import fullconnectionConfig._
   val io = new Bundle {
     val EN   = in Bool()
-    val wb   = slave(WeightBiasStreamInterface(weightWidth, biasWidth, useBias))
+    val wb   = slave(WeightBiasInterface(weightWidth, biasWidth, useBias))
     val pre  = slave(Stream(Vec(SInt(inputWidth bits), fullconnectionNum)))
     val post = master(Stream(SInt(outputWidth bits)))
   }
@@ -230,13 +159,13 @@ class FullConnectionLayer(layerCfg: FullConnectionLayerConfig) extends Component
   val biasCnt   = if (useBias) Counter(outputSize) else null
 
   // Receive weights and biases
-  io.wb.weight.ready := True
+  io.wb.weight.ready := (weightCnt.value < inputSize * outputSize)
   when(io.wb.weight.valid) {
     weightMem.write(weightCnt.value, io.wb.weight.payload)
     weightCnt.increment()
   }
   if (useBias) {
-    io.wb.bias.ready := True
+    io.wb.bias.ready := (biasCnt.value < outputSize)
     when(io.wb.bias.valid) {
       biasMem.write(biasCnt.value, io.wb.bias.payload)
       biasCnt.increment()
@@ -307,7 +236,7 @@ class FullConnectionLayer(layerCfg: FullConnectionLayerConfig) extends Component
 
 //     // Basic full connection layer streaming weights/bias with multi-input
 //     SpinalConfig(targetDirectory = "rtl").generateVerilog(
-//       new FullConnectionStream(FullConnectionConfig(
+//       new FullConnection(FullConnectionConfig(
 //         inputWidth = 8,
 //         outputWidth = 16,
 //         weightWidth = 8,

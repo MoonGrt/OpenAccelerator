@@ -132,7 +132,7 @@ class SimpleLeNet5(config: LeNet5Config) extends Component {
     useBias = useBias,
     quantization = quantization
   )
-  val fc = new FullConnectionStream(fc_config)
+  val fc = new FullConnection(fc_config)
   fc.io.EN := io.EN
   fc.io.pre <> pool2.io.post
   fc.io.wb.weight <> io.weight
@@ -163,14 +163,14 @@ class LeNet5(config: LeNet5Config) extends Component {
   // ============================================================================
   // Convolution Layer Steam Map
   // ============================================================================
-  val kernelMapCfg = Conv2DLayerMapConfig(
+  val kernelMapCfg = StreamMapConfig(
     dataWidth = 8,
-    layerKernelSize = Seq(
+    streamSize = Seq(
       6 * 5 * 5,
       6 * 5 * 5 * 12
     )
   )
-  val kernelMap = new Conv2DLayerMap(kernelMapCfg)
+  val kernelMap = new StreamMap(kernelMapCfg)
   kernelMap.io.kernelIn <> io.kernel
 
   // ============================================================================
@@ -367,6 +367,7 @@ class LeNet5TestBench extends Component {
   // ----------------------------
   // Enable
   cnn.io.EN := ~cnn.io.kernel.valid && ~cnn.io.weight.valid
+  cnn.io.output.ready := True
 
   // Kernel 驱动
   val convWCnt = Reg(UInt(log2Up(6*5*5+6*5*5*12) bits)) init(0)
