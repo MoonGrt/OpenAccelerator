@@ -42,23 +42,20 @@ case class KernelInterface(dataWidth: Int, kernelSize: Int) extends Bundle with 
 
 // Conv2D Configuration
 case class Conv2DConfig(
-  dataWidth     : Int,            // bits per pixel
-  convWidth     : Int,            // bits per convolution output
-  lineLength    : Int,            // number of pixels per line
-  kernelSize    : Int = 3,        // size of kernel (3x3, 5x5, etc.)
-  kernel        : Seq[Int] = Seq(1,2,1, 2,4,2, 1,2,1),
-  kernelShift   : Int = 4,        // right shift to divide by kernel sum (e.g. 16 -> shift 4)
+  channelNum    : Int = 1,        // number of input channels
+  dataWidth     : Int = 8,        // bits per pixel
+  convWidth     : Int = 8,        // bits per convolution output
   padding       : Int = 1,        // padding size (0=no padding, 1=same padding for (3x3, 5x5, etc) kernel)
   stride        : Int = 1,        // stride size (1=no stride, 2=skip every other pixel, etc.)
   lineLengthDyn : Boolean = true, // dynamic line length
-  kernelDyn     : Boolean = true, // dynamic kernel size
-  insigned      : Boolean = true, // input signed or unsigned
-  leftresize    : Boolean = true  // left shift to increase precision
+  lineLength    : Int = 24,       // number of pixels per line
+  kernelSize    : Int = 3,        // size of kernel (3x3, 5x5, etc.)
+  kernelShift   : Int = 4,        // right shift to divide by kernel sum (e.g. 16 -> shift 4)
+  kernel        : Seq[Int] = Seq(1,2,1, 2,4,2, 1,2,1)
 ) {
   require(padding <= (kernelSize - 1) / 2, "padding must be less than (kernelSize - 1)/2")
 }
 
-// Conv2D Configuration
 class Conv2D(config: Conv2DConfig) extends Component {
   import config._
   val io = new Bundle {
@@ -66,7 +63,7 @@ class Conv2D(config: Conv2DConfig) extends Component {
     val pre  = slave(Stream(SInt(dataWidth bits)))
     val post = master(Stream(SInt(convWidth bits)))
     val linewidth = if (lineLengthDyn) in UInt(log2Up((lineLength - 1)) bits) else null
-    val kernel = if (kernelDyn) slave(KernelInterface(dataWidth, kernelSize)) else null
+    val kernel = slave(Stream(SInt(dataWidth bits)))
   }
 
   // Matrix
@@ -76,18 +73,14 @@ class Conv2D(config: Conv2DConfig) extends Component {
 
   val pixels = (0 until kernelSize).flatMap(i => (0 until kernelSize).map(j => m.io.matrix.m(i)(j)))
   val kernelRegs = Vec(Reg(SInt(dataWidth bits)) init(0), kernelSize * kernelSize)
-  if (kernelDyn) {
-    // ========== kernel bus interface ==========
-    val bus = io.kernel
-    for(i <- 0 until kernelSize; j <- 0 until kernelSize) {
-      kernelRegs(i*kernelSize + j) := bus.k(i)(j)
-    }
-  } else {
-    // ========== static kernel ==========
-    for ((k, idx) <- kernel.zipWithIndex) {
-      kernelRegs(idx) := S(k, dataWidth bits)
-    }
+  // ========== kernel dynamic streaming ==========
+  val idx = Reg(UInt(log2Up(kernelSize * kernelSize) bits)) init(0)
+  val stream = io.kernel
+  when(stream.valid) {
+    kernelRegs(idx) := stream.payload
+    idx := idx + 1
   }
+  stream.ready := True
 
   // Convolution
   val acc = (pixels, kernelRegs).zipped.map(_ * _).reduce(_ + _).resize(32)
@@ -99,47 +92,55 @@ class Conv2D(config: Conv2DConfig) extends Component {
   io.post.payload := io.EN ? convolution | io.pre.payload.resized
 }
 
-class Conv2DStream(config: Conv2DConfig) extends Component {
+class Conv2DMultiChannel(config: Conv2DConfig) extends Component {
   import config._
   val io = new Bundle {
     val EN   = in Bool()
-    val pre  = slave(Stream(SInt(dataWidth bits)))
+    val pre  = slave(Stream(Vec(SInt(dataWidth bits), channelNum)))
     val post = master(Stream(SInt(convWidth bits)))
     val linewidth = if (lineLengthDyn) in UInt(log2Up((lineLength - 1)) bits) else null
-    val kernel = if (kernelDyn) slave(Stream(SInt(dataWidth bits))) else null
+    val kernel = slave(Stream(SInt(dataWidth bits)))
   }
 
-  // Matrix
-  val m = new Matrix(MatrixConfig(dataWidth, lineLength, kernelSize, padding, stride, lineLengthDyn))
-  m.io.pre <> io.pre
-  if (lineLengthDyn) { m.io.linewidth := io.linewidth }
+  // ================= Matrix per channel =================
+  val m = (0 until channelNum).map { ch =>
+    val mat = new Matrix(MatrixConfig(dataWidth, lineLength, kernelSize, padding, stride, lineLengthDyn))
+    mat.io.pre.valid := io.pre.valid
+    mat.io.pre.payload := io.pre.payload(ch)
+    if (lineLengthDyn) { mat.io.linewidth := io.linewidth }
+    mat
+  }
+  io.pre.ready := m.map(_.io.pre.ready).reduce(_ && _)
 
-  val pixels = (0 until kernelSize).flatMap(i => (0 until kernelSize).map(j => m.io.matrix.m(i)(j)))
-  val kernelRegs = Vec(Reg(SInt(dataWidth bits)) init(0), kernelSize * kernelSize)
-  if (kernelDyn) {
-    // ========== kernel dynamic streaming ==========
-    val idx = Reg(UInt(log2Up(kernelSize * kernelSize) bits)) init(0)
-    val stream = io.kernel
-    when(stream.valid) {
-      kernelRegs(idx) := stream.payload
-      idx := idx + 1
-    }
-    stream.ready := True
-  } else {
-    // ========== static kernel ==========
-    for ((k, idx) <- kernel.zipWithIndex) {
-      kernelRegs(idx) := S(k, dataWidth bits)
+  // Kernel registers for each channel
+  val kernelRegs = Vec(Vec(Reg(SInt(dataWidth bits)) init(0), kernelSize * kernelSize), channelNum)
+  // ========== Dynamic kernel streaming ==========
+  val idx = Reg(UInt(log2Up(kernelSize * kernelSize * channelNum) bits)) init(0)
+  val stream = io.kernel
+  when(stream.valid) {
+    val ch  = (idx / (kernelSize * kernelSize)).resized
+    val pos = (idx % (kernelSize * kernelSize)).resized
+    kernelRegs(ch)(pos) := stream.payload
+    idx := idx + 1
+    when(idx === (channelNum * kernelSize * kernelSize - 1)) {
+      idx := 0
     }
   }
+  stream.ready := True
 
-  // Convolution
-  val acc = (pixels, kernelRegs).zipped.map(_ * _).reduce(_ + _).resize(32)
+  // ================= Convolution over all channels =================
+  val convResults = for (ch <- 0 until channelNum) yield {
+    val pixels = (0 until kernelSize).flatMap(i => (0 until kernelSize).map(j => m(ch).io.matrix.m(i)(j)))
+    (pixels, kernelRegs(ch)).zipped.map(_ * _).reduce(_ + _)
+  }
+
+  val acc = convResults.reduce(_ + _).resize(32)
   val shifted = (acc >> kernelShift)
   val convolution = shifted.resize(convWidth)
 
-  // Output
-  io.post.valid := io.EN ? RegNext(m.io.matrix.de) | io.pre.valid
-  io.post.payload := io.EN ? convolution | io.pre.payload.resized
+  // ================= Output =================
+  io.post.valid := io.EN ? RegNext(m(0).io.matrix.de) | io.pre.valid
+  io.post.payload := io.EN ? convolution | io.pre.payload(0).resized
 }
 
 
@@ -151,18 +152,18 @@ case class Conv2DLayerConfig(
   convConfig: Conv2DConfig
 )
 
-class Conv2DLayerStream(layerCfg: Conv2DLayerConfig) extends Component {
+class Conv2DLayer(layerCfg: Conv2DLayerConfig) extends Component {
   import layerCfg._
   val io = new Bundle {
     val EN   = in Bool()
     val pre  = slave(Stream(SInt(convConfig.dataWidth bits)))
     val post = master(Stream(Vec(SInt(convConfig.convWidth bits), convNum)))
     val linewidth = if (convConfig.lineLengthDyn) in UInt(log2Up((convConfig.lineLength - 1)) bits) else null
-    val kernel = if (convConfig.kernelDyn) slave(Stream(SInt(convConfig.dataWidth bits))) else null
+    val kernel = slave(Stream(SInt(convConfig.dataWidth bits)))
   }
 
-  // Multiple Conv2DStream
-  val convs = Array.fill(convNum)(new Conv2DStream(convConfig))
+  // Multiple Conv2D
+  val convs = Array.fill(convNum)(new Conv2D(convConfig))
   for (i <- 0 until convNum) {
     convs(i).io.EN := io.EN
     convs(i).io.pre.payload := io.pre.payload
@@ -174,23 +175,21 @@ class Conv2DLayerStream(layerCfg: Conv2DLayerConfig) extends Component {
   }
 
   // Kernel distributor
-  if (convConfig.kernelDyn) {
-    val totalKernelSize = convConfig.kernelSize * convConfig.kernelSize
-    val idx = Reg(UInt(log2Up(totalKernelSize) bits)) init(0)
-    val kId = Reg(UInt(log2Up(convNum) bits)) init(0)
-    // One-hot select the currently active convolution kernel
-    for (i <- 0 until convNum) {
-      convs(i).io.kernel.valid   := io.kernel.valid && (kId === i)
-      convs(i).io.kernel.payload := io.kernel.payload
-    }
-    io.kernel.ready := convs.map(c => c.io.kernel.ready && (kId === convs.indexOf(c))).reduce(_ || _)
-    // Control distribution order
-    when(io.kernel.fire) {
-      idx := idx + 1
-      when(idx === (totalKernelSize - 1)) {
-        idx := 0
-        kId := kId + 1
-      }
+  val totalKernelSize = convConfig.kernelSize * convConfig.kernelSize
+  val idx = Reg(UInt(log2Up(totalKernelSize) bits)) init(0)
+  val kId = Reg(UInt(log2Up(convNum) bits)) init(0)
+  // One-hot select the currently active convolution kernel
+  for (i <- 0 until convNum) {
+    convs(i).io.kernel.valid   := io.kernel.valid && (kId === i)
+    convs(i).io.kernel.payload := io.kernel.payload
+  }
+  io.kernel.ready := convs.map(c => c.io.kernel.ready && (kId === convs.indexOf(c))).reduce(_ || _)
+  // Control distribution order
+  when(io.kernel.fire) {
+    idx := idx + 1
+    when(idx === (totalKernelSize - 1)) {
+      idx := 0
+      kId := kId + 1
     }
   }
   // Output
@@ -201,50 +200,56 @@ class Conv2DLayerStream(layerCfg: Conv2DLayerConfig) extends Component {
   }
 }
 
-class Conv2DLayerStreamMultiIn(layerCfg: Conv2DLayerConfig) extends Component {
+class Conv2DLayerMultiChannel(layerCfg: Conv2DLayerConfig) extends Component {
   import layerCfg._
   val io = new Bundle {
     val EN   = in Bool()
-    val pre  = slave(Stream(Vec(SInt(convConfig.dataWidth bits), convNum)))
+    val pre  = slave(Stream(Vec(SInt(convConfig.dataWidth bits), convConfig.channelNum)))
     val post = master(Stream(Vec(SInt(convConfig.convWidth bits), convNum)))
     val linewidth = if (convConfig.lineLengthDyn) in UInt(log2Up((convConfig.lineLength - 1)) bits) else null
-    val kernel = if (convConfig.kernelDyn) slave(Stream(SInt(convConfig.dataWidth bits))) else null
+    val kernel = slave(Stream(SInt(convConfig.dataWidth bits)))
   }
 
-  // Multiple Conv2DStream
-  val convs = Array.fill(convNum)(new Conv2DStream(convConfig))
-  // Dynamic lineWidth
+  // ========== Multiple Conv2D ==========
+  val convs = Array.fill(convNum)(new Conv2DMultiChannel(convConfig))
   for (i <- 0 until convNum) {
     convs(i).io.EN := io.EN
-    convs(i).io.pre.payload := io.pre.payload(i)
     convs(i).io.pre.valid := io.pre.valid
+    for (j <- 0 until convConfig.channelNum) {
+      convs(i).io.pre.payload(j) := io.pre.payload(j)
+    }
     convs(i).io.post.ready := io.post.ready
     if (convConfig.lineLengthDyn) {
       convs(i).io.linewidth := io.linewidth
     }
   }
 
-  // kernel distributor
-  if (convConfig.kernelDyn) {
-    val totalKernelSize = convConfig.kernelSize * convConfig.kernelSize
-    val idx = Reg(UInt(log2Up(totalKernelSize) bits)) init(0)
-    val kId = Reg(UInt(log2Up(convNum) bits)) init(0)
-    // One-hot select the currently active convolution kernel
-    for (i <- 0 until convNum) {
-      convs(i).io.kernel.valid   := io.kernel.valid && (kId === i)
-      convs(i).io.kernel.payload := io.kernel.payload
-    }
-    io.kernel.ready := convs.map(c => c.io.kernel.ready && (kId === convs.indexOf(c))).reduce(_ || _)
-    // Control distribution order
-    when(io.kernel.fire) {
-      idx := idx + 1
-      when(idx === (totalKernelSize - 1)) {
-        idx := 0
-        kId := kId + 1
+  // ========== Kernel distributor ==========
+  // Each Conv2D requires channelNum * kernelSize * kernelSize weights.
+  val totalKernelSize = convConfig.channelNum * convConfig.kernelSize * convConfig.kernelSize
+  val idx = Reg(UInt(log2Up(totalKernelSize) bits)) init(0)
+  val kId = Reg(UInt(log2Up(convNum) bits)) init(0)
+
+  // Distribution weight: Only one Conv2D kernel.valid is true at a time.
+  for (i <- 0 until convNum) {
+    convs(i).io.kernel.valid   := io.kernel.valid && (kId === i)
+    convs(i).io.kernel.payload := io.kernel.payload
+  }
+  io.kernel.ready := convs.map(c => c.io.kernel.ready && (kId === convs.indexOf(c))).reduce(_ || _)
+
+  // Control distribution order
+  when(io.kernel.fire) {
+    idx := idx + 1
+    when(idx === (totalKernelSize - 1)) {
+      idx := 0
+      kId := kId + 1
+      when(kId === (convNum - 1)) {
+        kId := 0
       }
     }
   }
-  // Output
+
+  // ========== Output ==========
   io.pre.ready := convs.map(_.io.pre.ready).reduce(_ && _)
   io.post.valid := convs.map(_.io.post.valid).reduce(_ && _)
   for (i <- 0 until convNum) {
@@ -256,12 +261,12 @@ class Conv2DLayerStreamMultiIn(layerCfg: Conv2DLayerConfig) extends Component {
 /* --------------------------------------------------------------------------- */
 /* -------------------------- Convolution Layer Map -------------------------- */
 /* --------------------------------------------------------------------------- */
-case class Conv2DLayerStreamMapConfig(
+case class Conv2DLayerMapConfig(
   dataWidth: Int,
-  layerKernelSize: Seq[Int] // 每层需要的kernel元素数量
+  layerKernelSize: Seq[Int]
 )
 
-class Conv2DLayerStreamMap(mapCfg: Conv2DLayerStreamMapConfig) extends Component {
+class Conv2DLayerMap(mapCfg: Conv2DLayerMapConfig) extends Component {
   import mapCfg._
   val io = new Bundle {
     val kernelIn = slave(Stream(SInt(dataWidth bits)))
@@ -298,65 +303,52 @@ class Conv2DLayerStreamMap(mapCfg: Conv2DLayerStreamMapConfig) extends Component
 /* ----------------------------------------------------------------------------- */
 // object Conv2DGen {
 //   def main(args: Array[String]): Unit = {
-//     val meanKernel = Seq(1,1,1, 1,1,1, 1,1,1) // Identity kernel: 1 1 1 / 1 1 1 / 1 1 1
-//     val gaussianKernel = Seq(1,2,1, 2,4,2, 1,2,1) // Gaussian kernel: 1 2 1 / 2 4 2 / 1 2 1
-//     val sharpenKernel = Seq(0,-1,0, -1,5,-1, 0,-1,0) // Sharpen kernel: 0 -1 0 / -1 5 -1 / 0 -1 0
-//     val meanKernel5x5 = Seq(1,1,1,1,1, 1,1,1,1,1, 1,1,1,1,1, 1,1,1,1,1, 1,1,1,1,1)
-//     val gaussianKernel5x5 = Seq(1,4,6,4,1, 4,16,24,16,4, 6,24,36,24,6, 4,16,24,16,4, 1,4,6,4,1) // Gaussian kernel: 1 4 6 4 1 / 4 16 24 16 4 / 6 24 36 24 6 / 4 16 24 16 4 / 1 4 6 4 1
 //     // SpinalConfig(targetDirectory = "rtl").generateVerilog(
 //     //   new Conv2D(Conv2DConfig(
 //     //     dataWidth = 8,
 //     //     convWidth = 10,
-//     //     lineLength = 28,
-//     //     kernelSize = 5,
-//     //     kernel = gaussianKernel5x5,
-//     //     kernelShift = 4,
-//     //     lineLengthDyn = true,
-//     //     kernelDyn = true,
 //     //     padding = 1,
-//     //     stride = 1))
+//     //     stride = 1,
+//     //     lineLengthDyn = true,
+//     //     kernelSize = 5))
 //     // ).printPruned()
 //     SpinalConfig(targetDirectory = "rtl").generateVerilog(
-//       new Conv2DStream(Conv2DConfig(
+//       new Conv2DMultiChannel(Conv2DConfig(
+//         channelNum = 3,
 //         dataWidth = 8,
 //         convWidth = 10,
-//         lineLength = 28,
-//         kernelSize = 5,
-//         kernelShift = 4,
-//         lineLengthDyn = true,
-//         kernelDyn = true,
 //         padding = 1,
-//         stride = 1))
+//         stride = 1,
+//         lineLengthDyn = true,
+//         kernelSize = 5))
 //     ).printPruned()
 //   }
 // }
 
-// object Conv2DLayerStreamGen {
+// object Conv2DLayerGen {
 //   def main(args: Array[String]): Unit = {
 //     val config = Conv2DLayerConfig(
 //       convNum = 6,
 //       convConfig = Conv2DConfig(
+//         channelNum = 3,
 //         dataWidth = 8,
 //         convWidth = 10,
-//         lineLength = 28,
-//         kernelSize = 5,
-//         kernelShift = 4,
-//         lineLengthDyn = true,
-//         kernelDyn = true,
 //         padding = 1,
-//         stride = 1))
+//         stride = 1,
+//         lineLengthDyn = true,
+//         kernelSize = 5))
 //     // SpinalConfig(targetDirectory = "rtl").generateVerilog(
-//     //   new Conv2DLayerStream(config)
+//     //   new Conv2DLayer(config)
 //     // ).printPruned()
 //     SpinalConfig(targetDirectory = "rtl").generateVerilog(
-//       new Conv2DLayerStreamMultiIn(config)
+//       new Conv2DLayerMultiChannel(config)
 //     ).printPruned()
 //   }
 // }
 
-// object Conv2DLayerStreamMapGen {
+// object Conv2DLayerMapGen {
 //   def main(args: Array[String]): Unit = {
-//     val kernelMapCfg = Conv2DLayerStreamMapConfig(
+//     val kernelMapCfg = Conv2DLayerMapConfig(
 //       dataWidth = 8,
 //       layerKernelSize = Seq(
 //         6 * 5 * 5,
@@ -364,7 +356,7 @@ class Conv2DLayerStreamMap(mapCfg: Conv2DLayerStreamMapConfig) extends Component
 //       )
 //     )
 //     SpinalConfig(targetDirectory = "rtl").generateVerilog(
-//       new Conv2DLayerStreamMap(kernelMapCfg)
+//       new Conv2DLayerMap(kernelMapCfg)
 //     )
 //   }
 // }

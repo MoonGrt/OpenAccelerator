@@ -210,7 +210,7 @@ case class FullConnectionLayerConfig(
   fullconnectionConfig: FullConnectionConfig
 )
 
-class FullConnectionLayerStream(layerCfg: FullConnectionLayerConfig) extends Component {
+class FullConnectionLayer(layerCfg: FullConnectionLayerConfig) extends Component {
   import layerCfg._
   import fullconnectionConfig._
   val io = new Bundle {
@@ -324,7 +324,7 @@ class FullConnectionLayerStream(layerCfg: FullConnectionLayerConfig) extends Com
 //   def main(args: Array[String]): Unit = {
 //     // Basic full connection layer streaming weights/bias with multi-input
 //     SpinalConfig(targetDirectory = "rtl").generateVerilog(
-//       new FullConnectionLayerStream(FullConnectionLayerConfig(
+//       new FullConnectionLayer(FullConnectionLayerConfig(
 //         fullconnectionNum = 6,
 //         fullconnectionConfig = FullConnectionConfig(
 //           inputWidth = 8,

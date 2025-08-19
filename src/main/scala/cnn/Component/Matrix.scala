@@ -136,8 +136,6 @@ class Matrix(config: MatrixConfig) extends Component {
 
   // Stride count
   val strideCounter = Reg(UInt(log2Up(stride) bits)) init(0)
-  val strideValid = Bool()
-  strideValid := (strideCounter === 0)
   when(raw_matrix_de){
     if (stride > 1){
       when(strideCounter === stride - 1){
@@ -148,7 +146,7 @@ class Matrix(config: MatrixConfig) extends Component {
     }
   }
 
-  io.matrix.de := raw_matrix_de && strideValid
+  io.matrix.de := raw_matrix_de && (strideCounter === 0)
 
   // Output control logic - only output when not padding and stride is valid
   for(i <- 0 until kernelSize){
