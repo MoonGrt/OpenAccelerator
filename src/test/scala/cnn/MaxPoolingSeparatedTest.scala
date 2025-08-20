@@ -12,7 +12,7 @@ object MaxPoolingSeparatedTest {
     SpinalConfig(targetDirectory = "rtl").generateVerilog(
       new MaxPooling2x2(UInt(8 bits), MaxPool2x2Config(
         dataWidth = 8,
-        lineLength = 32, // Small test size
+        rowNum = 32, // Small test size
         padding = 0,
         stride = 2))
     ).printPruned()
@@ -22,7 +22,7 @@ object MaxPoolingSeparatedTest {
     SpinalConfig(targetDirectory = "rtl").generateVerilog(
       new MaxPooling3x3(UInt(8 bits), MaxPool3x3Config(
         dataWidth = 8,
-        lineLength = 32, // Small test size
+        rowNum = 32, // Small test size
         padding = 1,
         stride = 2))
     ).printPruned()
@@ -32,7 +32,7 @@ object MaxPoolingSeparatedTest {
     SpinalConfig(targetDirectory = "rtl").generateVerilog(
       new MaxPooling2x2(UInt(8 bits), MaxPool2x2Config(
         dataWidth = 8,
-        lineLength = 32,
+        rowNum = 32,
         padding = 0,
         stride = 1))
     ).printPruned()
@@ -42,7 +42,7 @@ object MaxPoolingSeparatedTest {
     SpinalConfig(targetDirectory = "rtl").generateVerilog(
       new MaxPooling3x3(UInt(8 bits), MaxPool3x3Config(
         dataWidth = 8,
-        lineLength = 32,
+        rowNum = 32,
         padding = 1,
         stride = 1))
     ).printPruned()
@@ -98,7 +98,7 @@ object MaxPoolingSeparatedTest {
     println("// 2x2 MaxPooling")
     println("val pool2x2 = new MaxPooling2x2(UInt(8 bits), MaxPool2x2Config(")
     println("  dataWidth = 8,")
-    println("  lineLength = 24,")
+    println("  rowNum = 24,")
     println("  padding = 0,")
     println("  stride = 2")
     println("))")
@@ -106,7 +106,7 @@ object MaxPoolingSeparatedTest {
     println("\n// 3x3 MaxPooling")
     println("val pool3x3 = new MaxPooling3x3(UInt(8 bits), MaxPool3x3Config(")
     println("  dataWidth = 8,")
-    println("  lineLength = 24,")
+    println("  rowNum = 24,")
     println("  padding = 1,")
     println("  stride = 2")
     println("))")

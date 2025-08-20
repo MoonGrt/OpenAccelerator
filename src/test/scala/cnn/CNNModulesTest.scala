@@ -14,7 +14,7 @@ object CNNModulesTest {
       new Conv2D3x3(UInt(8 bits), Conv2DConfig(
         dataWidth = 8,
         convWidth = 10,
-        lineLength = 32, // Small test size
+        rowNum = 32, // Small test size
         kernel = gaussianKernel,
         kernelShift = 4,
         padding = 1,
@@ -26,7 +26,7 @@ object CNNModulesTest {
     SpinalConfig(targetDirectory = "rtl").generateVerilog(
       new MaxPooling(UInt(8 bits), MaxPoolConfig(
         dataWidth = 8,
-        lineLength = 32,
+        rowNum = 32,
         kernelSize = 2,
         padding = 0,
         stride = 2))

@@ -121,8 +121,8 @@ case class ReLULayerConfig(
 class ReLULayer(layerCfg: ReLULayerConfig) extends Component {
   import layerCfg._
   val io = new Bundle {
-    val EN   = in Bool()
-    val pre  = slave(Stream(Vec(SInt(reluConfig.dataWidth bits), reluNum)))
+    val EN = in Bool()
+    val pre = slave(Stream(Vec(SInt(reluConfig.dataWidth bits), reluNum)))
     val post = master(Stream(Vec(SInt(reluConfig.dataWidth bits), reluNum)))
   }
 
@@ -139,9 +139,7 @@ class ReLULayer(layerCfg: ReLULayerConfig) extends Component {
   // Output
   io.pre.ready := relus.map(_.io.pre.ready).reduce(_ && _)
   io.post.valid := relus.map(_.io.post.valid).reduce(_ && _)
-  for (i <- 0 until reluNum) {
-    io.post.payload(i) := relus(i).io.post.payload
-  }
+  for (i <- 0 until reluNum) { io.post.payload(i) := relus(i).io.post.payload }
 }
 
 

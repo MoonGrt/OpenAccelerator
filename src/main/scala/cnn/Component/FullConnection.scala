@@ -71,21 +71,21 @@ class FullConnection(config: FullConnectionConfig) extends Component {
 
   // Storage for weights and bias
   val weightMem = Mem(SInt(weightWidth bits), inputSize * outputSize)
-  val weightCnt = Counter(inputSize * outputSize)
-  val biasMem   = if (useBias) Mem(SInt(biasWidth bits), outputSize) else null
-  val biasCnt   = if (useBias) Counter(outputSize) else null
+  val weightCnt = Reg(UInt(log2Up(inputSize * outputSize) bits)) init(0)
+  val biasMem = if (useBias) Mem(SInt(biasWidth bits), outputSize) else null
+  val biasCnt = if (useBias) Reg(UInt(log2Up(outputSize) bits)) init(0) else null
 
   // Receive weights and biases
-  io.wb.weight.ready := True
-  when(io.wb.weight.valid) {
-    weightMem.write(weightCnt.value, io.wb.weight.payload)
-    weightCnt.increment()
+  io.wb.weight.ready := (weightCnt < inputSize * outputSize)
+  when(io.wb.weight.fire) {
+    weightMem.write(weightCnt, io.wb.weight.payload)
+    weightCnt := weightCnt + 1
   }
   if (useBias) {
-    io.wb.bias.ready := True
-    when(io.wb.bias.valid) {
-      biasMem.write(biasCnt.value, io.wb.bias.payload)
-      biasCnt.increment()
+    io.wb.bias.ready := (biasCnt < outputSize)
+    when(io.wb.bias.fire) {
+      biasMem.write(biasCnt, io.wb.bias.payload)
+      biasCnt := biasCnt + 1
     }
   }
 
@@ -154,21 +154,21 @@ class FullConnectionLayer(layerCfg: FullConnectionLayerConfig) extends Component
 
   // Storage for weights and bias
   val weightMem = Mem(SInt(weightWidth bits), inputSize * outputSize)
-  val weightCnt = Counter(inputSize * outputSize)
-  val biasMem   = if (useBias) Mem(SInt(biasWidth bits), outputSize) else null
-  val biasCnt   = if (useBias) Counter(outputSize) else null
+  val weightCnt = Reg(UInt(log2Up(inputSize * outputSize) bits)) init(0)
+  val biasMem = if (useBias) Mem(SInt(biasWidth bits), outputSize) else null
+  val biasCnt = if (useBias) Reg(UInt(log2Up(outputSize) bits)) init(0) else null
 
   // Receive weights and biases
-  io.wb.weight.ready := (weightCnt.value < inputSize * outputSize)
-  when(io.wb.weight.valid) {
-    weightMem.write(weightCnt.value, io.wb.weight.payload)
-    weightCnt.increment()
+  io.wb.weight.ready := weightCnt < inputSize * outputSize
+  when(io.wb.weight.fire) {
+    weightMem.write(weightCnt, io.wb.weight.payload)
+    weightCnt := weightCnt + 1
   }
   if (useBias) {
-    io.wb.bias.ready := (biasCnt.value < outputSize)
-    when(io.wb.bias.valid) {
-      biasMem.write(biasCnt.value, io.wb.bias.payload)
-      biasCnt.increment()
+    io.wb.bias.ready := biasCnt < outputSize
+    when(io.wb.bias.fire) {
+      biasMem.write(biasCnt, io.wb.bias.payload)
+      biasCnt := biasCnt + 1
     }
   }
 
@@ -179,7 +179,6 @@ class FullConnectionLayer(layerCfg: FullConnectionLayerConfig) extends Component
   val accVec = Vec(Reg(SInt(outputWidth bits)) init(0), fullconnectionNum)
   // Record how many data groups each stream has received so far.
   val inputCnt = Counter(inputSize / fullconnectionNum)
-
   // When EN is active and all inputs are valid, accumulate to the register.
   io.post.valid := False
   io.post.payload := 0
@@ -204,11 +203,7 @@ class FullConnectionLayer(layerCfg: FullConnectionLayerConfig) extends Component
       for (k <- 0 until fullconnectionNum) accVec(k) := 0
       inputCnt.clear()
       outputCnt.increment()
-      when(outputCnt.willOverflow) {
-        computing := False
-      } .otherwise {
-        computing := True
-      }
+      when(outputCnt.willOverflow) { computing := False } .otherwise { computing := True }
       io.post.valid := True
       io.post.payload := quantized.asSInt
     }

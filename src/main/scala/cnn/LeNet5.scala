@@ -47,11 +47,12 @@ class SimpleLeNet5(config: LeNet5Config) extends Component {
   val conv1_config = Conv2DConfig(
     dataWidth = 8,
     convWidth = 8,
-    lineLength = 28,
+    rowNum = 28,
+    colNum = 28,
     kernelSize = 5,
     kernelShift = 4,
-    lineLengthDyn = false,
-    padding = 2,
+    rowNumDyn = false,
+    padding = 0,
     stride = 1)
   val conv1 = new Conv2D(conv1_config)
   conv1.io.EN := io.EN
@@ -70,11 +71,11 @@ class SimpleLeNet5(config: LeNet5Config) extends Component {
   // ============================================================================
   val pool1_config = MaxPoolConfig(
     dataWidth = dataWidth,
-    lineLength = 24,
+    rowNum = 24,
     kernelSize = 2,
     padding = 0,
     stride = 2,
-    lineLengthDyn = false
+    rowNumDyn = false
   )
   val pool1 = new MaxPool(pool1_config)
   pool1.io.EN := io.EN
@@ -86,11 +87,12 @@ class SimpleLeNet5(config: LeNet5Config) extends Component {
   val conv2_config = Conv2DConfig(
     dataWidth = dataWidth,
     convWidth = dataWidth,
-    lineLength = 12,
+    rowNum = 12,
+    colNum = 12,
     kernelSize = 5,
     kernelShift = 4,
-    lineLengthDyn = false,
-    padding = 2,
+    rowNumDyn = false,
+    padding = 0,
     stride = 1)
   val conv2 = new Conv2D(conv2_config)
   conv2.io.EN := io.EN
@@ -109,11 +111,11 @@ class SimpleLeNet5(config: LeNet5Config) extends Component {
   // ============================================================================
   val pool2_config = MaxPoolConfig(
     dataWidth = dataWidth,
-    lineLength = 8,
+    rowNum = 8,
     kernelSize = 2,
     padding = 0,
     stride = 2,
-    lineLengthDyn = false
+    rowNumDyn = false
   )
   val pool2 = new MaxPool(pool2_config)
   pool2.io.EN := io.EN
@@ -132,18 +134,16 @@ class SimpleLeNet5(config: LeNet5Config) extends Component {
     useBias = useBias,
     quantization = quantization
   )
-  val fc = new FullConnection(fc_config)
-  fc.io.EN := io.EN
-  fc.io.pre <> pool2.io.post
-  fc.io.wb.weight <> io.weight
-  if (useBias) {
-    fc.io.wb.bias <> io.bias
-  }
+  val fullconnect = new FullConnection(fc_config)
+  fullconnect.io.EN := io.EN
+  fullconnect.io.pre <> pool2.io.post
+  fullconnect.io.wb.weight <> io.weight
+  if (useBias) { fullconnect.io.wb.bias <> io.bias }
 
   // ============================================================================
   // Output
   // ============================================================================
-  io.output <> fc.io.post
+  io.output <> fullconnect.io.post
 }
 
 /**
@@ -181,11 +181,11 @@ class LeNet5(config: LeNet5Config) extends Component {
     convConfig = Conv2DConfig(
       dataWidth = 8,
       convWidth = 8,
-      lineLength = 28,
+      rowNum = 28,
+      colNum = 28,
       kernelSize = 5,
-      kernelShift = 4,
-      lineLengthDyn = false,
-      padding = 1,
+      rowNumDyn = false,
+      padding = 0,
       stride = 1))
   val convLayer1 = new Conv2DLayer(convLayer1_config)
   convLayer1.io.EN := io.EN
@@ -211,11 +211,12 @@ class LeNet5(config: LeNet5Config) extends Component {
     maxpoolNum = 6,
     maxpoolConfig = MaxPoolConfig(
       dataWidth = dataWidth,
-      lineLength = 24,
+      rowNum = 24,
+      colNum = 24,
       kernelSize = 2,
       padding = 0,
       stride = 2,
-      lineLengthDyn = false))
+      rowNumDyn = false))
   val poolLayer1 = new MaxPoolLayer(poolLayer1_config)
   poolLayer1.io.EN := io.EN
   poolLayer1.io.pre <> reluLayer1.io.post
@@ -229,11 +230,11 @@ class LeNet5(config: LeNet5Config) extends Component {
       channelNum = 6,
       dataWidth = 8,
       convWidth = 8,
-      lineLength = 28,
+      rowNum = 12,
+      colNum = 12,
       kernelSize = 5,
-      kernelShift = 4,
-      lineLengthDyn = false,
-      padding = 1,
+      rowNumDyn = false,
+      padding = 0,
       stride = 1))
   val convLayer2 = new Conv2DLayerMultiChannel(convLayer2_config)
   convLayer2.io.EN := io.EN
@@ -259,11 +260,12 @@ class LeNet5(config: LeNet5Config) extends Component {
     maxpoolNum = 12,
     maxpoolConfig = MaxPoolConfig(
       dataWidth = dataWidth,
-      lineLength = 8,
+      rowNum = 8,
+      colNum = 8,
       kernelSize = 2,
       padding = 0,
       stride = 2,
-      lineLengthDyn = false))
+      rowNumDyn = false))
   val poolLayer2 = new MaxPoolLayer(poolLayer2_config)
   poolLayer2.io.EN := io.EN
   poolLayer2.io.pre <> reluLayer2.io.post
@@ -282,18 +284,16 @@ class LeNet5(config: LeNet5Config) extends Component {
       outputSize = numClasses,
       useBias = useBias,
       quantization = quantization))
-  val fc = new FullConnectionLayer(fc_config)
-  fc.io.EN := io.EN
-  fc.io.wb.weight <> io.weight
-  if (useBias) {
-    fc.io.wb.bias <> io.bias
-  }
-  fc.io.pre <> poolLayer2.io.post
+  val fullconnect = new FullConnectionLayer(fc_config)
+  fullconnect.io.EN := io.EN
+  fullconnect.io.wb.weight <> io.weight
+  if (useBias) { fullconnect.io.wb.bias <> io.bias }
+  fullconnect.io.pre <> poolLayer2.io.post
 
   // ============================================================================
   // Output
   // ============================================================================
-  io.output <> fc.io.post
+  io.output <> fullconnect.io.post
 }
 
 
@@ -353,48 +353,45 @@ class LeNet5TestBench extends Component {
   ))
 
   // ----------------------------
-  // 初始化输入数据 Mem
+  // Initialize input data Mem
   // ----------------------------
   val inputMem = Mem(SInt(8 bits), wordCount = 28*28)
   val convWMem = Mem(SInt(8 bits), wordCount = 6*5*5 + 6*5*5*12)
   val fcWMem = Mem(SInt(8 bits), wordCount = 4*4*12*10)
-  MemTools.initMem(inputMem, "test/LeNet5/weight/0.txt", "bin")
-  MemTools.initMem(convWMem, "test/LeNet5/weight/cw.txt", "sdec")
-  MemTools.initMem(fcWMem, "test/LeNet5/weight/fcw.txt", "sdec")
+  // Basic calculation test
+  // MemTools.initMem(inputMem, "test/LeNet5/weight/0.txt", "bin")
+  // MemTools.initMem(convWMem, "test/LeNet5/weight/cw.txt", "sdec")
+  // MemTools.initMem(fcWMem, "test/LeNet5/weight/fcw.txt", "sdec")
+  // LeNet-5 calculation test
+  MemTools.initMem(inputMem, "test/LeNet5/test/bar.txt", "bin")
+  MemTools.initMem(convWMem, "test/LeNet5/test/sobel.txt", "sdec")
+  MemTools.initMem(fcWMem, "test/LeNet5/test/fcw.txt", "sdec")
 
   // ----------------------------
-  // 驱动逻辑
+  // Drive logic
   // ----------------------------
   // Enable
-  cnn.io.EN := ~cnn.io.kernel.valid && ~cnn.io.weight.valid
+  cnn.io.EN := ~cnn.io.kernel.ready && ~cnn.io.weight.ready
   cnn.io.output.ready := True
 
-  // Kernel 驱动
-  val convWCnt = Reg(UInt(log2Up(6*5*5+6*5*5*12) bits)) init(0)
-  cnn.io.kernel.valid := convWCnt < convWMem.wordCount
-  cnn.io.kernel.payload := convWMem.readSync(convWCnt)
-  when(cnn.io.kernel.fire) {
-    convWCnt := convWCnt + 1
-  }
-  // FC Weight 驱动
-  val fcWCnt   = Reg(UInt(log2Up(4*4*12*10) bits)) init(0)
+  // Kernel driver
+  val kernelWCnt = Reg(UInt(log2Up(6*5*5+6*5*5*12) bits)) init(0)
+  cnn.io.kernel.valid := kernelWCnt < convWMem.wordCount
+  cnn.io.kernel.payload := convWMem.readAsync(kernelWCnt)
+  when(cnn.io.kernel.fire) { kernelWCnt := kernelWCnt + 1 }
+  // FC Weight driver
+  val fcWCnt = Reg(UInt(log2Up(4*4*12*10) bits)) init(0)
   cnn.io.weight.valid := fcWCnt < fcWMem.wordCount
-  cnn.io.weight.payload := fcWMem.readSync(fcWCnt)
-  when(cnn.io.weight.fire) {
-    fcWCnt := fcWCnt + 1
-  }
-  // Input 驱动
+  cnn.io.weight.payload := fcWMem.readAsync(fcWCnt)
+  when(cnn.io.weight.fire) { fcWCnt := fcWCnt + 1 }
+  // Input driver
   val inputCnt = Reg(UInt(log2Up(28*28) bits)) init(0)
   cnn.io.input.valid := (inputCnt < inputMem.wordCount) && cnn.io.EN
-  cnn.io.input.payload := inputMem.readSync(inputCnt)
-  when(cnn.io.input.fire) {
-    inputCnt := inputCnt + 1
-  }
+  cnn.io.input.payload := inputMem.readAsync(inputCnt)
+  when(cnn.io.input.fire) { inputCnt := inputCnt + 1 }
 
-  // 输出结果打印 (仿真时用 $display)
-  when(cnn.io.output.valid){
-    report(s"LeNet5 Output = ${cnn.io.output.payload}")
-  }
+  // Print output results
+  when(cnn.io.output.valid){ report(s"LeNet5 Output = ${cnn.io.output.payload}") }
 }
 
 object LeNet5TBGen {
