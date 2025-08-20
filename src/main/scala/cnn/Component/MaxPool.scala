@@ -21,38 +21,55 @@ import spinal.lib._
  */
 // MaxPool Configuration
 case class MaxPoolConfig(
-  dataWidth     : Int,           // bits per pixel
-  lineLength    : Int,           // number of pixels per line
-  kernelSize    : Int,           // kernel size
-  padding       : Int = 0,       // padding size
-  stride        : Int = 2,       // stride size
-  lineLengthDyn : Boolean = true // dynamic line length
+  dataWidth     : Int,            // bits per pixel
+  kernelSize    : Int,            // kernel size
+  padding       : Int = 0,        // padding size
+  stride        : Int = 2,        // stride size
+  lineLengthDyn : Boolean = true, // dynamic line length
+  lineLength    : Int = 8         // number of pixels per line
 )
 
 // MaxPool Component
 class MaxPool(config: MaxPoolConfig) extends Component {
   import config._
   val io = new Bundle {
-    val EN = in Bool()
-    val pre = slave(Stream(SInt(dataWidth bits)))
+    val EN   = in Bool()
+    val pre  = slave(Stream(SInt(dataWidth bits)))
     val post = master(Stream(SInt(dataWidth bits)))
     val linewidth = if (lineLengthDyn) in UInt(log2Up((lineLength - 1)) bits) else null
   }
 
-  // Instantiate matrix builder
-  val m = new Matrix(MatrixConfig(dataWidth, lineLength, kernelSize, padding, stride, lineLengthDyn))
-  m.io.pre <> io.pre
-  if (lineLengthDyn) { m.io.linewidth := io.linewidth }
-  // Max pooling computation
+  // --- ShiftColumn ---
+  val shiftCol = new ShiftColumn(ShiftColumnConfig(
+    dataWidth     = dataWidth,
+    kernelSize    = kernelSize,
+    lineLength    = lineLength,
+    lineLengthDyn = lineLengthDyn
+  ))
+  shiftCol.io.pre <> io.pre
+  if (lineLengthDyn) {
+    shiftCol.io.linewidth := io.linewidth
+  }
+
+  // --- Matrix ---
+  val matrix = new Matrix(MatrixConfig(
+    dataWidth  = dataWidth,
+    kernelSize = kernelSize,
+    padding    = padding,
+    stride     = stride
+  ))
+  matrix.io.column << shiftCol.io.column
+
+  // --- Max pooling ---
   def maxPool(matrix: MatrixInterface): SInt = {
     val elems = for(i <- 0 until kernelSize; j <- 0 until kernelSize) yield matrix.m(i)(j)
     elems.reduceBalancedTree((a, b) => (a > b) ? a | b)
   }
-  val maxValue = maxPool(m.io.matrix).resized
+  val maxValue = maxPool(matrix.io.matrix).resized
 
-  // Stream output logic
-  io.post.valid := Mux(io.EN, RegNext(m.io.matrix.de), io.pre.valid)
-  io.post.payload := Mux(io.EN, maxValue, io.pre.payload)
+  // --- 输出 ---
+  io.post.valid   := matrix.io.matrix.de && io.EN
+  io.post.payload := maxValue
 }
 
 
