@@ -13,30 +13,31 @@ case class StreamMapConfig(
 
 class StreamMap(mapCfg: StreamMapConfig) extends Component {
   import mapCfg._
+  require(streamSize.length > 1, "StreamMap requires at least two output streams")
   val io = new Bundle {
-    val kernelIn = slave(Stream(SInt(dataWidth bits)))
-    val kernelOut = Vec(master(Stream(SInt(dataWidth bits))), streamSize.length)
+    val streamIn = slave(Stream(SInt(dataWidth bits)))
+    val streamOut = Vec(master(Stream(SInt(dataWidth bits))), streamSize.length)
   }
 
-  val streamSizesHW = Vec(streamSize.map(x => U(x, 32 bits)))
-  val layerIdx = Reg(UInt(log2Up(streamSize.length) bits)) init(0)
-  val cnt = Reg(UInt(32 bits)) init(0)
-
+  // Registers
+  val streamSizes = Vec(streamSize.map(x => U(x, 32 bits)))
+  val streamIdx = Reg(UInt(log2Up(streamSize.length) bits)) init(0)
+  val streamCnt = Reg(UInt(32 bits)) init(0)
   // Data routing
-  io.kernelIn.ready := io.kernelOut(layerIdx).ready // Enter ready to default to the current layer's ready
+  io.streamIn.ready := io.streamOut(streamIdx).ready // Enter ready to default to the current stream's ready
   for (i <- 0 until streamSize.length) { // Default each output invalid
-    io.kernelOut(i).valid := False
-    io.kernelOut(i).payload := io.kernelIn.payload
+    io.streamOut(i).valid := False
+    io.streamOut(i).payload := io.streamIn.payload
   }
-  when(io.kernelIn.valid && io.kernelIn.ready) {
-    io.kernelOut(layerIdx).valid := True
-    cnt := cnt + 1
-    when(cnt === (streamSizesHW(layerIdx) - 1)) {
-      cnt := 0
-      when(layerIdx === (streamSizesHW.length - 1)) {
-        layerIdx := 0
+  when(io.streamIn.valid && io.streamIn.ready) {
+    io.streamOut(streamIdx).valid := True
+    streamCnt := streamCnt + 1
+    when(streamCnt === (streamSizes(streamIdx) - 1)) {
+      streamCnt := 0
+      when(streamIdx === (streamSizes.length - 1)) {
+        streamIdx := 0
       } otherwise {
-        layerIdx := layerIdx + 1
+        streamIdx := streamIdx + 1
       }
     }
   }

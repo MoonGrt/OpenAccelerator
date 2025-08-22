@@ -69,11 +69,12 @@ case class MaxPoolLayerConfig(
 
 class MaxPoolLayer(layerCfg: MaxPoolLayerConfig) extends Component {
   import layerCfg._
+  import maxpoolConfig._
   val io = new Bundle {
     val EN = in Bool()
-    val pre = slave(Stream(Vec(SInt(maxpoolConfig.dataWidth bits), maxpoolNum)))
-    val post = master(Stream(Vec(SInt(maxpoolConfig.dataWidth bits), maxpoolNum)))
-    val rownum = if (maxpoolConfig.rowNumDyn) in UInt(log2Up((maxpoolConfig.rowNum - 1)) bits) else null
+    val pre = slave(Stream(Vec(SInt(dataWidth bits), maxpoolNum)))
+    val post = master(Stream(Vec(SInt(dataWidth bits), maxpoolNum)))
+    val rownum = if (rowNumDyn) in UInt(log2Up((rowNum - 1)) bits) else null
   }
 
   // --- Multiple MaxPool ---
@@ -83,7 +84,7 @@ class MaxPoolLayer(layerCfg: MaxPoolLayerConfig) extends Component {
     maxpools(i).io.pre.payload := io.pre.payload(i)
     maxpools(i).io.pre.valid := io.pre.valid
     maxpools(i).io.post.ready := io.post.ready
-    if (maxpoolConfig.rowNumDyn) { maxpools(i).io.rownum := io.rownum }
+    if (rowNumDyn) { maxpools(i).io.rownum := io.rownum }
   }
   // --- Output ---
   io.pre.ready := maxpools.map(_.io.pre.ready).reduce(_ && _)

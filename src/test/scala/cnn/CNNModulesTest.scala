@@ -11,7 +11,7 @@ object CNNModulesTest {
     println("1. Testing Conv2D3x3...")
     val gaussianKernel = Seq(1,2,1, 2,4,2, 1,2,1)
     SpinalConfig(targetDirectory = "rtl").generateVerilog(
-      new Conv2D3x3(UInt(8 bits), Conv2DConfig(
+      new Conv2D3x3(UInt(8 bits), ConvConfig(
         dataWidth = 8,
         convWidth = 10,
         rowNum = 32, // Small test size
@@ -41,10 +41,10 @@ object CNNModulesTest {
         signed = false))
     ).printPruned()
     
-    // Test FullConnection
-    println("4. Testing FullConnection...")
+    // Test FullConnect
+    println("4. Testing FullConnect...")
     SpinalConfig(targetDirectory = "rtl").generateVerilog(
-      new FullConnection(UInt(8 bits), FullConnectionConfig(
+      new FullConnect(UInt(8 bits), FullConnectConfig(
         inputWidth = 8,
         outputWidth = 16,
         weightWidth = 8,
@@ -63,7 +63,7 @@ object CNNModulesTest {
     println("1. Conv2D3x3: 3x3 convolution with padding and stride support")
     println("2. MaxPooling: 2x2/3x3 max pooling with padding and stride support")
     println("3. ReLU: Multiple activation functions (ReLU, Leaky ReLU, Parametric ReLU, ELU)")
-    println("4. FullConnection: Fully connected layer with matrix multiplication and bias")
+    println("4. FullConnect: Fully connected layer with matrix multiplication and bias")
     println("\nAll modules use SpinalHDL Stream interface for easy integration.")
   }
 }

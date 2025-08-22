@@ -51,9 +51,7 @@ case class ShiftColumnInterface(dataWidth: Int, kernelSize: Int) extends Bundle 
 
   def << (that: ShiftColumnInterface): Unit = {
     this.de := that.de
-    for(i <- 0 until kernelSize){
-      this.c(i) := that.c(i)
-    }
+    for(i <- 0 until kernelSize){ this.c(i) := that.c(i) }
   }
 }
 
@@ -86,11 +84,8 @@ class ShiftColumn(config: ShiftColumnConfig) extends Component {
   row0 := io.pre.payload.asBits
   lineBuffers.zipWithIndex.foreach { case (ram, idx) =>
     ram.io.CE := io.pre.valid
-    if (idx == 0) {
-      ram.io.D := row0
-    } else {
-      ram.io.D := rows(idx - 1).asBits
-    }
+    if (idx == 0) { ram.io.D := row0 }
+    else { ram.io.D := rows(idx - 1).asBits }
     if (rowNumDyn) { ram.io.rownum := io.rownum }
     rows(idx) := ram.io.Q
   }
@@ -98,9 +93,7 @@ class ShiftColumn(config: ShiftColumnConfig) extends Component {
   // Output control logic
   io.column.de := RegNext(io.pre.valid)
   io.column.c(0) := row0.asSInt
-  for(i <- 0 until kernelSize - 1){
-    io.column.c(i + 1) := rows(i).asSInt
-  }
+  for(i <- 0 until kernelSize - 1){ io.column.c(i + 1) := rows(i).asSInt }
 }
 
 
@@ -121,9 +114,7 @@ case class MatrixInterface(dataWidth: Int, kernelSize: Int) extends Bundle with 
 
   def << (that: MatrixInterface): Unit = {
     this.de := that.de
-    for(i <- 0 until kernelSize; j <- 0 until kernelSize){
-      this.m(i)(j) := that.m(i)(j)
-    }
+    for(i <- 0 until kernelSize; j <- 0 until kernelSize){ this.m(i)(j) := that.m(i)(j) }
   }
 }
 
@@ -159,14 +150,10 @@ class Matrix(config: MatrixConfig) extends Component {
   // Column input promotion
   when(io.column.de) {
     // Newest column goes into cols(0)
-    for (i <- 0 until kernelSize) {
-      cols(0)(i) := io.column.c(i)
-    }
+    for (i <- 0 until kernelSize) { cols(0)(i) := io.column.c(i) }
     // Move old columns to the right
     for (j <- (kernelSize - 2) downto 1) {
-      for (i <- 0 until kernelSize) {
-        cols(j)(i) := cols(j - 1)(i)
-      }
+      for (i <- 0 until kernelSize) { cols(j)(i) := cols(j - 1)(i) }
     }
   }
   // Padding & Stride
@@ -203,13 +190,8 @@ class Matrix(config: MatrixConfig) extends Component {
   // Output matrix construction
   for (i <- 0 until kernelSize) {
     for (j <- 0 until kernelSize) {
-      if (j == 0) {
-        // The newest column comes directly from input
-        io.matrix.m(i)(j) := io.column.c(i)
-      } else {
-        // Historical columns from cache
-        io.matrix.m(i)(j) := cols(j - 1)(i)
-      }
+      if (j == 0) { io.matrix.m(i)(j) := io.column.c(i) }
+      else { io.matrix.m(i)(j) := cols(j - 1)(i) }
     }
   }
 }
