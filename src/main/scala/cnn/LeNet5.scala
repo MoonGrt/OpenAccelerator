@@ -184,7 +184,7 @@ class LeNet5(config: LeNet5Config) extends Component {
       colNum = 28,
       kernelSize = 5,
       kernelShift = 0,
-      insigned = false, // imagetype is unsigned
+      // insigned = false, // imagetype is unsigned
       rowNumDyn = false,
       padding = 0,
       stride = 1))
@@ -234,6 +234,7 @@ class LeNet5(config: LeNet5Config) extends Component {
       convWidth = 32,
       rowNum = 12,
       colNum = 12,
+      shiftType = "none",
       kernelSize = 5,
       kernelShift = 0,
       rowNumDyn = false,
@@ -266,6 +267,7 @@ class LeNet5(config: LeNet5Config) extends Component {
       dataWidth = 8,
       rowNum = 8,
       colNum = 8,
+      shiftType = "none",
       kernelSize = 2,
       padding = 0,
       stride = 2,
@@ -302,7 +304,7 @@ class LeNet5(config: LeNet5Config) extends Component {
   val max = new Max(32, numClasses, false, true)
   max.io.data := fcLayer.io.post.payload
   // Output Stream
-  io.output.valid := RegNext(fcLayer.io.post.valid)
+  io.output.valid := fcLayer.io.post.valid
   io.output.payload := max.io.idx
 }
 
@@ -369,14 +371,14 @@ class LeNet5TestBench extends Component {
   val convWMem = Mem(SInt(8 bits), wordCount = 6*5*5 + 6*5*5*12)
   val fcWMem = Mem(SInt(8 bits), wordCount = 4*4*12*10)
   // Basic calculation test
-  MemTools.initMem(inputMem, "test/LeNet5/dataset/png2txt/output/test_bin.txt", "bin")
+  // // MemTools.initMem(inputMem, "test/LeNet5/dataset/png2txt/output/test_bin.txt", "bin")
   // MemTools.initMem(inputMem, "test/LeNet5/weight/0.txt", "bin")
-  MemTools.initMem(convWMem, "test/LeNet5/weight/cw.txt", "sdec")
-  MemTools.initMem(fcWMem, "test/LeNet5/weight/fcw.txt", "sdec")
+  // MemTools.initMem(convWMem, "test/LeNet5/weight/cw.txt", "sdec")
+  // MemTools.initMem(fcWMem, "test/LeNet5/weight/fcw.txt", "sdec")
   // LeNet-5 calculation test
-  // MemTools.initMem(inputMem, "test/LeNet5/test/bar.txt", "bin")
-  // MemTools.initMem(convWMem, "test/LeNet5/test/sobel.txt", "sdec")
-  // MemTools.initMem(fcWMem, "test/LeNet5/test/fcw.txt", "sdec")
+  MemTools.initMem(inputMem, "test/LeNet5/test/bar.txt", "bin")
+  MemTools.initMem(convWMem, "test/LeNet5/test/sobel.txt", "sdec")
+  MemTools.initMem(fcWMem, "test/LeNet5/test/fcw.txt", "sdec")
 
   // ----------------------------
   // Drive logic

@@ -27,18 +27,19 @@ import spinal.lib._
  */
 // Conv2D Configuration
 case class ConvConfig(
-  channelNum  : Int = 1,        // number of input channels
-  dataWidth   : Int = 8,        // bits per pixel
-  convWidth   : Int = 8,        // bits per convolution output
-  padding     : Int = 1,        // padding size (0=no padding, 1=same padding for (3x3, 5x5, etc) kernel)
-  stride      : Int = 1,        // stride size (1=no stride, 2=skip every other pixel, etc.)
-  insigned    : Boolean = true, // signed or unsigned input
-  rowNumDyn   : Boolean = true, // dynamic line length
-  rowNum      : Int = 24,       // number of pixels per row
-  colNum      : Int = 24,       // number of pixels per column
-  kernelWidth : Int = 8,        // bits per kernel value
-  kernelSize  : Int = 3,        // size of kernel (3x3, 5x5, etc.)
-  kernelShift : Int = 4,        // right shift to divide by kernel sum (e.g. 16 -> shift 4)
+  channelNum  : Int = 1,             // number of input channels
+  dataWidth   : Int = 8,             // bits per pixel
+  convWidth   : Int = 8,             // bits per convolution output
+  padding     : Int = 1,             // padding size (0=no padding, 1=same padding for (3x3, 5x5, etc) kernel)
+  stride      : Int = 1,             // stride size (1=no stride, 2=skip every other pixel, etc.)
+  insigned    : Boolean = true,      // signed or unsigned input
+  rowNumDyn   : Boolean = true,      // dynamic line length
+  rowNum      : Int = 24,            // number of pixels per row
+  shiftType   : String = "preShift", // shift type for shift column/ram
+  colNum      : Int = 24,            // number of pixels per column
+  kernelWidth : Int = 8,             // bits per kernel value
+  kernelSize  : Int = 3,             // size of kernel (3x3, 5x5, etc.)
+  kernelShift : Int = 4,             // right shift to divide by kernel sum (e.g. 16 -> shift 4)
   kernel      : Seq[Int] = Seq(1,2,1, 2,4,2, 1,2,1)
 ) {
   require(padding <= (kernelSize - 1) / 2, "padding must be less than (kernelSize - 1)/2")
@@ -86,7 +87,7 @@ class Conv2D(config: ConvConfig) extends Component {
   }
 
   // --- ShiftColumn ---
-  val colArray = new ShiftColumn(ShiftColumnConfig(dataWidth, kernelSize, rowNumDyn, rowNum))
+  val colArray = new ShiftColumn(ShiftColumnConfig(dataWidth, kernelSize, rowNumDyn, rowNum, shiftType))
   if (rowNumDyn) { colArray.io.rownum := io.rownum }
   colArray.io.pre <> io.pre
   // --- Convolution ---
@@ -112,7 +113,7 @@ class Conv3D(config: ConvConfig) extends Component {
   streamMap.io.streamIn <> io.kernel
   // --- ShiftColumn --- 
   val cols = (0 until channelNum).map { ch =>
-    val colArray = new ShiftColumn(ShiftColumnConfig(dataWidth, kernelSize, rowNumDyn, rowNum))
+    val colArray = new ShiftColumn(ShiftColumnConfig(dataWidth, kernelSize, rowNumDyn, rowNum, shiftType))
     if (rowNumDyn) { colArray.io.rownum := io.rownum }
     colArray.io.pre.valid := io.pre.valid
     colArray.io.pre.payload := io.pre.payload(ch)
@@ -159,7 +160,7 @@ class Conv2DLayer(layerCfg: Conv2DLayerConfig) extends Component {
   val streamMap = new StreamMap(StreamMapConfig(kernelWidth, Seq.fill(convNum)(kernelSize * kernelSize)))
   streamMap.io.streamIn <> io.kernel
   // --- ShiftColumn ---
-  val colArray = new ShiftColumn(ShiftColumnConfig(dataWidth, kernelSize, rowNumDyn, rowNum))
+  val colArray = new ShiftColumn(ShiftColumnConfig(dataWidth, kernelSize, rowNumDyn, rowNum, shiftType))
   if (rowNumDyn) { colArray.io.rownum := io.rownum }
   colArray.io.pre <> io.pre
   // --- Convolution ---

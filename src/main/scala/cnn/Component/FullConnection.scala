@@ -41,7 +41,7 @@ class FullConnect(config: FullConnectConfig) extends Component {
   }
 
   // Ready signal
-  io.pre.ready := True
+  io.pre.ready := io.EN
 
   // Storage for weights
   val weightMem = Mem(SInt(weightWidth bits), inputSize)
@@ -64,20 +64,15 @@ class FullConnect(config: FullConnectConfig) extends Component {
   when(io.EN && io.pre.valid) {
     accVec := (accVec + weightMem.readSync(inputCnt.resized) * io.pre.payload).resized
     inputCnt.increment()
-    when(inputCnt.willOverflow) {
-      // Accumulate a complete set of inputs and output the results.
-      val withBias =
-        if (useBias) accVec + io.bias
-        else accVec.resize(outputWidth)
-      val quantized =
-        if (quantization) (withBias >> weightWidth).asUInt.resize(outputWidth)
-        else withBias.asUInt.resize(outputWidth)
-      // Clear the accumulator register to prepare for the next round.
-      accVec := 0
-      // Output the results.
-      io.post.valid := True
-      io.post.payload := quantized.asSInt
-    }
+  }
+  when(RegNext(inputCnt.willOverflow)) {
+    val withBias = if (useBias) accVec + io.bias else accVec.resize(outputWidth)
+    val quantized =
+      if (quantization) (withBias >> weightWidth).resize(outputWidth)
+      else withBias.resize(outputWidth)
+    io.post.valid := True
+    io.post.payload := quantized
+    accVec := 0
   }
 }
 

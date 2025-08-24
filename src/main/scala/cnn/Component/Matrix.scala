@@ -8,28 +8,35 @@ import spinal.lib._
 /* --------------------------------------------------------------------------- */
 /**
  * ShiftRam is a (dynamic) shift register with wrap-around behavior
+ *
+ * shiftType:
+ * - "none" :
+ * - "preShift" : readAsync: output is valid on next clock cycle -> preShift to align with the input data
+ * - "postShift" : readSync: output is valid on the same clock cycle as the input data
  */
-class ShiftRam(dataWidth: Int, rowNumDyn: Boolean = false, rowNum: Int = 8) extends Component {
+class ShiftRam(dataWidth: Int, rowNumDyn: Boolean = false, rowNum: Int = 8, shiftType: String = "preShift") extends Component {
+  val memDepth = if (shiftType == "preShift") {rowNum - 1} else {rowNum}
   val io = new Bundle {
     val CE = in Bool()
     val D  = in Bits(dataWidth bits)
     val Q  = out Bits(dataWidth bits)
-    val rownum = if (rowNumDyn) in UInt(log2Up((rowNum - 1)) bits) else null
+    val rownum = if (rowNumDyn) in UInt(log2Up(memDepth) bits) else null
   }
 
-  val mem = Mem(Bits(dataWidth bits), (rowNum - 1))
-  val wrPtr = RegInit(U(0, log2Up((rowNum - 1)) bits))
-  val rdPtr = RegInit(U(0, log2Up((rowNum - 1)) bits))
+  val mem = Mem(Bits(dataWidth bits), memDepth)
+  val wrPtr = RegInit(U(0, log2Up(memDepth) bits))
+  val rdPtr = RegInit(U(0, log2Up(memDepth) bits))
 
-  io.Q := mem.readSync(rdPtr)
+  if (shiftType == "asyncShift") { io.Q := mem.readAsync(rdPtr) } else { io.Q := mem.readSync(rdPtr) }
   when(io.CE) {
     mem(wrPtr) := io.D
     if (rowNumDyn) {
-      when(wrPtr === io.rownum - 1) { wrPtr := U(0) } .otherwise { wrPtr := wrPtr + 1 }
-      when(rdPtr === io.rownum - 1) { rdPtr := U(0) } .otherwise { rdPtr := rdPtr + 1 }
+      val rowCnt = if (shiftType == "preShift") { io.rownum - 2 } else { io.rownum - 1 }
+      when(wrPtr === rowCnt) { wrPtr := U(0) } .otherwise { wrPtr := wrPtr + 1 }
+      when(rdPtr === rowCnt) { rdPtr := U(0) } .otherwise { rdPtr := rdPtr + 1 }
     } else {
-      when(wrPtr === (rowNum - 1 ) - 1) { wrPtr := U(0) } .otherwise { wrPtr := wrPtr + 1 }
-      when(rdPtr === (rowNum - 1 ) - 1) { rdPtr := U(0) } .otherwise { rdPtr := rdPtr + 1 }
+      when(wrPtr === memDepth - 1) { wrPtr := U(0) } .otherwise { wrPtr := wrPtr + 1 }
+      when(rdPtr === memDepth - 1) { rdPtr := U(0) } .otherwise { rdPtr := rdPtr + 1 }
     }
   }
 }
@@ -60,7 +67,8 @@ case class ShiftColumnConfig(
   dataWidth  : Int,            // bits per pixel
   kernelSize : Int,            // kernel size
   rowNumDyn  : Boolean = true, // dynamic line length
-  rowNum     : Int = 8         // number of pixels per row
+  rowNum     : Int = 8,        // number of pixels per row
+  shiftType  : String = "preShift"
 )
 
 // ShiftColumn Component
@@ -75,24 +83,22 @@ class ShiftColumn(config: ShiftColumnConfig) extends Component {
   // Ready signal - always ready to accept input when not processing or when bypassing
   io.pre.ready := True
   // A total of (kernelSize - 1) line buffers are required.
-  val lineBuffers = Array.fill(kernelSize - 1)(new ShiftRam(dataWidth, rowNumDyn, rowNum))
+  val lineBuffers = Array.fill(kernelSize - 1)(new ShiftRam(dataWidth, rowNumDyn, rowNum, shiftType))
   // Row data stream, row(0) is the latest row, row(kernelSize - 1) is the oldest row.
-  val row0 = Reg(Bits(dataWidth bits)) init(0)
   val rows = Array.fill(kernelSize - 1)(Bits(dataWidth bits))
 
   // Write the input pixels sequentially into lineBuffer
-  row0 := io.pre.payload.asBits
   lineBuffers.zipWithIndex.foreach { case (ram, idx) =>
     ram.io.CE := io.pre.valid
-    if (idx == 0) { ram.io.D := row0 }
+    if (idx == 0) { ram.io.D := io.pre.payload.asBits }
     else { ram.io.D := rows(idx - 1).asBits }
     if (rowNumDyn) { ram.io.rownum := io.rownum }
     rows(idx) := ram.io.Q
   }
 
   // Output control logic
-  io.column.de := RegNext(io.pre.valid)
-  io.column.c(0) := row0.asSInt
+  io.column.de := io.pre.valid
+  io.column.c(0) := io.pre.payload.asBits.asSInt
   for(i <- 0 until kernelSize - 1){ io.column.c(i + 1) := rows(i).asSInt }
 }
 
@@ -200,19 +206,6 @@ class Matrix(config: MatrixConfig) extends Component {
 /* ----------------------------------------------------------------------------- */
 /* ---------------------------------- Demo Gen --------------------------------- */
 /* ----------------------------------------------------------------------------- */
-// object ShiftColumnGen {
-//   def main(args: Array[String]): Unit = {
-//     SpinalConfig(targetDirectory = "rtl").generateVerilog(
-//       new ShiftColumn(ShiftColumnConfig(
-//         dataWidth = 8,
-//         rowNum = 28,
-//         colNum = 28,
-//         kernelSize = 5,
-//         rowNumDyn = false))
-//     ).printPruned()
-//   }
-// }
-
 // object MatrixGen {
 //   def main(args: Array[String]): Unit = {
 //     SpinalConfig(targetDirectory = "rtl").generateVerilog(

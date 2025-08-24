@@ -21,13 +21,14 @@ import spinal.lib._
  */
 // MaxPool Configuration
 case class MaxPoolConfig(
-  dataWidth  : Int,            // bits per pixel
-  kernelSize : Int,            // kernel size
-  padding    : Int = 0,        // padding size
-  stride     : Int = 2,        // stride size
-  rowNumDyn  : Boolean = true, // dynamic line length
-  rowNum     : Int = 8,        // number of pixels per row
-  colNum     : Int = 8         // number of pixels per column
+  dataWidth  : Int,                // bits per pixel
+  kernelSize : Int,                // kernel size
+  padding    : Int = 0,            // padding size
+  stride     : Int = 2,            // stride size
+  rowNumDyn  : Boolean = true,     // dynamic line length
+  rowNum     : Int = 8,            // number of pixels per row
+  colNum     : Int = 8,            // number of pixels per column
+  shiftType  : String = "preShift" // shift type for shift column/ram
 )
 
 // MaxPool Component
@@ -41,7 +42,7 @@ class MaxPool(config: MaxPoolConfig) extends Component {
   }
 
   // --- ShiftColumn ---
-  val shiftCol = new ShiftColumn(ShiftColumnConfig(dataWidth, kernelSize, rowNumDyn, rowNum))
+  val shiftCol = new ShiftColumn(ShiftColumnConfig(dataWidth, kernelSize, rowNumDyn, rowNum, shiftType))
   if (rowNumDyn) { shiftCol.io.rownum := io.rownum }
   shiftCol.io.pre <> io.pre
   // --- Matrix ---
