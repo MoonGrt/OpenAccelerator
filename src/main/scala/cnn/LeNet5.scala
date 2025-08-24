@@ -183,6 +183,7 @@ class LeNet5(config: LeNet5Config) extends Component {
       rowNum = 28,
       colNum = 28,
       kernelSize = 5,
+      kernelShift = 0,
       insigned = false, // imagetype is unsigned
       rowNumDyn = false,
       padding = 0,
@@ -200,7 +201,7 @@ class LeNet5(config: LeNet5Config) extends Component {
     reluConfig = ReLUConfig(
       indataWidth = 32,
       outdataWidth = 8,
-      shift = 10,
+      reluShift = 10,
       activationType = "relu"))
   val reluLayer1 = new ReLULayer(reluLayer1_config)
   reluLayer1.io.pre <> convLayer1.io.post
@@ -234,6 +235,7 @@ class LeNet5(config: LeNet5Config) extends Component {
       rowNum = 12,
       colNum = 12,
       kernelSize = 5,
+      kernelShift = 0,
       rowNumDyn = false,
       padding = 0,
       stride = 1))
@@ -250,7 +252,7 @@ class LeNet5(config: LeNet5Config) extends Component {
     reluConfig = ReLUConfig(
       indataWidth = 32,
       outdataWidth = 8,
-      shift = 10,
+      reluShift = 10,
       activationType = "relu"))
   val reluLayer2 = new ReLULayer(reluLayer2_config)
   reluLayer2.io.pre <> convLayer2.io.post
@@ -280,7 +282,7 @@ class LeNet5(config: LeNet5Config) extends Component {
     fullconnectConfig = FullConnectConfig(
       kernelNum = 12,
       inputWidth = 8,
-      outputWidth = 8,
+      outputWidth = 32,
       weightWidth = weightWidth,
       biasWidth = biasWidth,
       inputSize = 4*4*12,
@@ -297,19 +299,11 @@ class LeNet5(config: LeNet5Config) extends Component {
   // Output
   // ============================================================================
   // Max Result
-  val maxVal = Reg(SInt(8 bits)) init(fcLayer.io.post.payload(0))
-  val maxIdx = Reg(UInt(log2Up(numClasses) bits)) init(0)
-  maxVal := fcLayer.io.post.payload(0)
-  maxIdx := 0
-  for(i <- 1 until numClasses) {
-    when(fcLayer.io.post.payload(i) > maxVal) {
-      maxVal := fcLayer.io.post.payload(i)
-      maxIdx := U(i, log2Up(numClasses) bits)
-    }
-  }
+  val max = new Max(32, numClasses, false, true)
+  max.io.data := fcLayer.io.post.payload
   // Output Stream
   io.output.valid := RegNext(fcLayer.io.post.valid)
-  io.output.payload := maxIdx
+  io.output.payload := max.io.idx
 }
 
 
@@ -375,13 +369,14 @@ class LeNet5TestBench extends Component {
   val convWMem = Mem(SInt(8 bits), wordCount = 6*5*5 + 6*5*5*12)
   val fcWMem = Mem(SInt(8 bits), wordCount = 4*4*12*10)
   // Basic calculation test
+  MemTools.initMem(inputMem, "test/LeNet5/dataset/png2txt/output/test_bin.txt", "bin")
   // MemTools.initMem(inputMem, "test/LeNet5/weight/0.txt", "bin")
-  // MemTools.initMem(convWMem, "test/LeNet5/weight/cw.txt", "sdec")
-  // MemTools.initMem(fcWMem, "test/LeNet5/weight/fcw.txt", "sdec")
+  MemTools.initMem(convWMem, "test/LeNet5/weight/cw.txt", "sdec")
+  MemTools.initMem(fcWMem, "test/LeNet5/weight/fcw.txt", "sdec")
   // LeNet-5 calculation test
-  MemTools.initMem(inputMem, "test/LeNet5/test/bar.txt", "bin")
-  MemTools.initMem(convWMem, "test/LeNet5/test/sobel.txt", "sdec")
-  MemTools.initMem(fcWMem, "test/LeNet5/test/fcw.txt", "sdec")
+  // MemTools.initMem(inputMem, "test/LeNet5/test/bar.txt", "bin")
+  // MemTools.initMem(convWMem, "test/LeNet5/test/sobel.txt", "sdec")
+  // MemTools.initMem(fcWMem, "test/LeNet5/test/fcw.txt", "sdec")
 
   // ----------------------------
   // Drive logic

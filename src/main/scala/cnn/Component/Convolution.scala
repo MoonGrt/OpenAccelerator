@@ -236,7 +236,8 @@ class Conv3DLayer(layerCfg: Conv2DLayerConfig) extends Component {
 //         stride = 1,
 //         rowNumDyn = true,
 //         kernelWidth = 8,
-//         kernelSize = 5))
+//         kernelSize = 5,
+//         kernelShift = 0))
 //     ).printPruned()
 //   }
 // }
@@ -253,7 +254,8 @@ class Conv3DLayer(layerCfg: Conv2DLayerConfig) extends Component {
 //         stride = 1,
 //         rowNumDyn = true,
 //         kernelWidth = 8,
-//         kernelSize = 5))
+//         kernelSize = 5,
+//         kernelShift = 0))
 //     SpinalConfig(targetDirectory = "rtl").generateVerilog(
 //       new Conv2DLayer(config)
 //     ).printPruned()

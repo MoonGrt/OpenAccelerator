@@ -2,11 +2,11 @@
 # 需要设置 1，2，3，4四处
 # input:经脚本转换后的MNIST数据集，28*28
 # output: 16*12 的手写数字 txt文件，一行存储8bit像素数据，一共192行
-from PIL import Image 
+from PIL import Image
 import numpy as np
 
-path0 = 'C:/Users/Administrator/Desktop/pic/16x12/' # 1 输入图片存储目录
-path1 = 'C:/Users/Administrator/Desktop/pic/16x12/' # 2 输出 txt 存储目录
+path0 = '../MNIST/16x12/' # 1 输入图片存储目录
+path1 = 'output/' # 输出 txt 存储目录
 output_size_w = 16 # 输出图片大小
 output_size_h = 12 # 输出图片大小
 
@@ -24,7 +24,7 @@ def dec2bin(dec_num, bit_wide=8):
 
 # 读取.png文件，此时image为一个np.array数组
 image = Image.open(path0 + '0.png') # 3 图片名称
-image_arr = image.resize((output_size_w,output_size_h)) # 先将28*28输入图像缩放为 24*24 
+image_arr = image.resize((output_size_w,output_size_h)) # 先将28*28输入图像缩放为 24*24
 image_arr = np.array(image_arr) # 再转化成numpy数组，二维数组，8bit数据  0-255 （无符号数据）
 image_arr = image_arr.astype(int) # float -> int
 # print(image_arr)

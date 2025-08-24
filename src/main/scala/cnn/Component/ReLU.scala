@@ -15,7 +15,7 @@ import spinal.lib._
 case class ReLUConfig(
   indataWidth    : Int = 8,         // bits per pixel
   outdataWidth   : Int = 8,         // bits per pixel
-  shift          : Int = 0,         // shift value for fixed-point data
+  reluShift      : Int = 0,         // shift value for fixed-point data
   activationType : String = "relu", // "relu", "leaky_relu", "parametric_relu", "elu"
   alpha          : Double = 0.01    // slope for negative values (leaky/parametric relu, elu)
 )
@@ -74,7 +74,7 @@ class ReLU(config: ReLUConfig) extends Component {
   }
 
   // Apply activation function to input signal
-  val activatedValue = activate(io.pre.payload) >> shift
+  val activatedValue = activate(io.pre.payload) >> reluShift
 
   // Stream output logic
   io.post.valid := io.pre.valid
@@ -124,7 +124,7 @@ class ReLULayer(layerCfg: ReLULayerConfig) extends Component {
 //       new ReLU(ReLUConfig(
 //         indataWidth = 8,
 //         outdataWidth = 8,
-//         shift = 1,
+//         reluShift = 1,
 //         activationType = "relu"))
 //     ).printPruned()
 //     // // Leaky ReLU
@@ -132,7 +132,7 @@ class ReLULayer(layerCfg: ReLULayerConfig) extends Component {
 //     //   new ReLU(ReLUConfig(
 //     //     indataWidth = 8,
 //     //     outdataWidth = 8,
-//     //     shift = 1,
+//     //     reluShift = 1,
 //     //     activationType = "leaky_relu",
 //     //     alpha = 0.01))
 //     // ).printPruned()
@@ -141,7 +141,7 @@ class ReLULayer(layerCfg: ReLULayerConfig) extends Component {
 //     //   new ReLU(ReLUConfig(
 //     //     indataWidth = 8,
 //     //     outdataWidth = 8,
-//     //     shift = 1,
+//     //     reluShift = 1,
 //     //     activationType = "parametric_relu",
 //     //     alpha = 0.01))
 //     // ).printPruned()
@@ -150,7 +150,7 @@ class ReLULayer(layerCfg: ReLULayerConfig) extends Component {
 //     //   new ReLU(ReLUConfig(
 //     //     indataWidth = 8,
 //     //     outdataWidth = 8,
-//     //     shift = 1,
+//     //     reluShift = 1,
 //     //     activationType = "elu",
 //     //     alpha = 1.0))
 //     // ).printPruned()
@@ -165,7 +165,7 @@ class ReLULayer(layerCfg: ReLULayerConfig) extends Component {
 //         reluConfig = ReLUConfig(
 //           indataWidth = 8,
 //           outdataWidth = 8,
-//           shift = 1,
+//           reluShift = 1,
 //           activationType = "relu"))
 //       )
 //     ).printPruned()
